@@ -29,12 +29,14 @@ app.add_middleware(
 # 3. Contratos de Entrada (Pydantic Models)
 class SimulacaoRequest(BaseModel):
     nome_local: str = Field(default="Ponto Customizado")
+    nome: str | None = Field(default=None)
     lat: float = Field(..., ge=-90.0, le=90.0)
     lon: float = Field(..., ge=-180.0, le=180.0)
     elevacao_m: float = Field(default=0.0, ge=-10000.0, le=15000.0)
     ano: int = Field(default=2026, ge=1900, le=2050)
     mes: int = Field(default=11, ge=1, le=12)
     dia: int = Field(default=15, ge=1, le=31)
+    data_inicio: str | None = Field(default=None, description="Opcional YYYY-MM-DD")
     dias_simulacao: int = Field(default=30, ge=1, le=90)
     passo_horas: int = Field(default=1, ge=1, le=24)
     usar_topografia: bool = Field(default=True)
@@ -126,7 +128,72 @@ def simular_local(req: SimulacaoRequest):
         raise HTTPException(status_code=400, detail=f"Parâmetro inválido: {str(ve)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+@app.post("/api/simulate")
+def simular_local(req: SimulacaoRequest):
+    passo_efetivo = 3 if (req.dias_simulacao > 30 and req.passo_horas == 1) else req.passo_horas
+    try:
+        # Resolve nome caso o payload envie "nome" em vez de "nome_local"
+        nome_final = req.nome.strip() if (req.nome and req.nome.strip()) else req.nome_local
 
+        # Resolve data caso o payload envie "data_inicio": "YYYY-MM-DD"
+        ano, mes, dia = req.ano, req.mes, req.dia
+        if req.data_inicio:
+            partes = req.data_inicio.strip().split("-")
+            if len(partes) == 3:
+                ano, mes, dia = int(partes[0]), int(partes[1]), int(partes[2])
+
+        # Passo A: Efemérides via Skyfield + normalização para vetores
+        lista_efemerides = calcular_visibilidade(
+            lat=req.lat,
+            lon=req.lon,
+            elevacao_m=req.elevacao_m,
+            ano=ano,
+            mes=mes,
+            dia=dia,
+            dias_simulacao=req.dias_simulacao,
+            passo_horas=passo_efetivo
+        )
+        dados_vetorizados = _normalizar_efemerides(lista_efemerides, passo_efetivo)
+
+        # Passo B: Gera horizonte 360° (com relevo real/sintético OU plano 0° se desativado)
+        if req.usar_topografia:
+            perfil_horizonte = gerar_perfil_horizonte_360(req.lat, req.lon, req.elevacao_m)
+        else:
+            perfil_horizonte = {
+                "modo_terreno": "Esfera Lunar Ideal (Sem Obstrução Topográfica)",
+                "site_id_detectado": None,
+                "azimutes_graus": list(range(360)),
+                "elevacao_horizonte_graus": [0.0] * 360,
+                "obstaculos_principais": []
+            }
+
+        # Sempre roda aplicar_obstrucao_terreno para manter todas as 6 chaves de series_temporais no JSON
+        dados_processados = aplicar_obstrucao_terreno(dados_vetorizados, perfil_horizonte)
+
+        # Passo C: Calcula KPIs executivos e engenharia de potência
+        metricas = analisar_metricas(dados_processados)
+
+        return {
+            "local": nome_final,
+            "coordenadas": {
+                "lat": req.lat,
+                "lon": req.lon,
+                "elevacao_m": req.elevacao_m
+            },
+            "configuracao": {
+                "data_inicio": f"{ano:04d}-{mes:02d}-{dia:02d}",
+                "dias_simulacao": req.dias_simulacao,
+                "passo_horas": passo_efetivo,
+                "topografia_ativa": req.usar_topografia
+            },
+            "metricas_resumo": metricas,
+            "perfil_horizonte_360": perfil_horizonte,
+            "series_temporais": dados_processados
+        }
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=f"Parâmetro inválido: {str(ve)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # 6. Rota POST: Compara cenários lado a lado (suporta cenario_a/cenario_b OU lista cenarios)
 @app.post("/api/compare")
