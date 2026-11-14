@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-
+from data_loader import get_sites_catalog
 from sites_catalog import SITES_CATALOG, get_site_by_id
 from ephemeris_engine import calcular_visibilidade
 from terrain_engine import gerar_perfil_horizonte_360, aplicar_obstrucao_terreno, identificar_site_conhecido
@@ -180,6 +180,116 @@ def comparar_cenarios(req: ComparacaoRequest):
         status_code=422,
         detail="Informe 'cenario_a' e 'cenario_b' ou uma lista em 'cenarios'."
     )
+
+# 6b. Adaptador para o frontend (contrato do frontend/js/api.js)
+class PousoRequest(BaseModel):
+    site_id: str | None = None
+    site_name: str | None = None
+    lat: float = Field(..., ge=-90.0, le=90.0)
+    lon: float = Field(..., ge=-360.0, le=360.0)
+    start_date: str = Field(default="2027-03-01")
+    days: int = Field(default=30, ge=1, le=90)
+    step_min: int = Field(default=60, ge=5, le=360)
+
+
+def _normalizar_lon(lon: float) -> float:
+    return ((lon + 180.0) % 360.0) - 180.0
+
+
+def _declividade_conhecida(site_id: str | None) -> float | None:
+    if not site_id:
+        return None
+    alias = {"im1_nova_c": "im1_malapert_a"}  # ids diferentes entre catálogo e JSON
+    alvo = alias.get(site_id, site_id)
+    for item in get_sites_catalog():
+        if item.get("id") == alvo:
+            return item.get("declividade_graus")
+    return None
+
+
+@app.post("/simular-pouso")
+def simular_pouso(req: PousoRequest):
+    lon = _normalizar_lon(req.lon)
+    site_id = identificar_site_conhecido(req.lat, lon)
+    site = get_site_by_id(site_id) if site_id else None
+    nome = (req.site_name or "").strip() or (site["name"] if site else NOME_PADRAO)
+
+    passo_horas = max(1, min(24, round(req.step_min / 60)))
+    res = simular_local(SimulacaoRequest(
+        nome=nome,
+        lat=req.lat,
+        lon=lon,
+        elevacao_m=site["elevation_m"] if site else 0.0,
+        data_inicio=req.start_date,
+        dias_simulacao=req.days,
+        passo_horas=passo_horas,
+        usar_topografia=True,
+    ))
+
+    s = res["series_temporais"]
+    m = res["metricas_resumo"]
+    perfil = res["perfil_horizonte_360"]
+    passo_h = res["configuracao"]["passo_horas"]
+
+    timeline = []
+    for i, ts in enumerate(s["timestamps"]):
+        sol_ok = bool(s["sol_visivel_bool"][i])
+        terra_ok = bool(s["terra_visivel_bool"][i])
+        timeline.append({
+            "step": i,
+            "timestamp": ts,
+            "elapsed_hours": i * passo_h,
+            "sun_elevation_deg": s["sol_elevacao_graus"][i],
+            "sun_azimuth_deg": s["sol_azimute_graus"][i],
+            "terrain_mask_deg": s["horizonte_direcao_sol_graus"][i],
+            "sun_visible": sol_ok,
+            "earth_elevation_deg": s["terra_elevacao_graus"][i],
+            "earth_azimuth_deg": s["terra_azimute_graus"][i],
+            "earth_visible": terra_ok,
+            "operational_window": sol_ok and terra_ok,
+        })
+
+    elev = perfil["elevacao_horizonte_graus"]
+    horizon_profile = [{"azimuth_deg": az, "elevation_deg": elev[az % 360]} for az in range(0, 361, 5)]
+
+    sun_pct = m["iluminacao_solar_pct"]
+    earth_pct = m["visibilidade_terra_pct"]
+    slope = _declividade_conhecida(site_id)
+    seguranca = None if slope is None else slope <= 15.0
+    iluminacao = sun_pct >= 50.0
+    comunicacao = earth_pct >= 50.0
+    go = iluminacao and comunicacao and seguranca is not False
+
+    return {
+        "site_id": site_id,
+        "site_name": nome,
+        "lat": req.lat,
+        "lon": req.lon,
+        "start_date": res["configuracao"]["data_inicio"],
+        "days": req.days,
+        "step_min": passo_h * 60,
+        "slope_deg": slope,                 # None = sem dado
+        "sunset_duration_min": None,        # ainda não calculado pelo backend
+        "sun_fraction_pct": sun_pct,
+        "earth_fraction_pct": earth_pct,
+        "max_continuous_night_hours": m["maior_noite_continua_horas"],
+        "horizon_profile": horizon_profile,
+        "criterios": {
+            "seguranca_topografica": seguranca,
+            "iluminacao_solar": iluminacao,
+            "comunicacao_direta": comunicacao,
+        },
+        "go_nogo": "GO" if go else "NO-GO",
+        "veredito_backend": m["veredito"],
+        "assumptions": [
+            f"Efemérides lunares e orientação da Lua: NASA/JPL SPICE (DE421), passo de {passo_h} h.",
+            f"Horizonte 360°: {perfil['modo_terreno']}.",
+            "Disco solar com semidiâmetro de 0,265°, sem refração atmosférica.",
+            "Critério GO: iluminação ≥ 50%, visada da Terra ≥ 50% e declividade ≤ 15° (quando houver dado).",
+            m["contexto_educacional"],
+        ],
+        "timeline": timeline,
+    }
 
 
 # 7. Serve o Frontend (HTML/CSS/JS) na rota raiz "/" com caminho absoluto seguro
