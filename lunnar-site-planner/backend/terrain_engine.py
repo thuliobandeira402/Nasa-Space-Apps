@@ -69,15 +69,16 @@ def gerar_perfil_horizonte_360(lat: float, lon: float, elevacao_m: float = 0.0) 
         try:
             horizonte_real = horizonte_lola(lat, lon, str(LOLA_DEM_PATH))
             malha = extrair_malha_terreno_lola(lat, lon, str(LOLA_DEM_PATH), grid_size=64)
+            res_m = int(round(malha["pixel_m"]))
             return {
-                "modo_terreno": "NASA LOLA LDEM (Real Data, 40 m/px)",
+                "modo_terreno": f"NASA LOLA LDEM (Real Data, {res_m} m/px)",
                 "site_id_detectado": site_id,
                 "azimutes_graus": azimutes.tolist(),
                 "elevacao_horizonte_graus": horizonte_real,
                 "obstaculos_principais": [],
-                "terrain_grid": malha,
-                "slope_deg_real": malha["slope_deg"],
-                "center_elevation_m_real": malha["center_elevation_m"],
+                "terrain_grid": malha_fallback,
+                "slope_deg_real": None,
+                "center_elevation_m_real": elevacao_m,
             }
         except Exception as e:
             print(f"[LOLA] Falha ao ler DEM ({e}); utilizando perfil catalogado/sintético.")
