@@ -22,17 +22,10 @@ import asyncio
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if LOLA_DEM_PATH.exists():
-        print("LOLA DEM já está instalado. Ignorando download.")
+        print(f"LOLA DEM carregado localmente: {LOLA_DEM_PATH.name}")
         app.state.lola_dem_path = LOLA_DEM_PATH
     else:
-        print("LOLA DEM não encontrado. Iniciando download em segundo plano...")
-        async def _baixar_em_bg():
-            try:
-                app.state.lola_dem_path = await run_in_threadpool(download_lola_dem)
-            except Exception as e:
-                print(f"[AVISO] Falha ao baixar LOLA DEM em segundo plano: {e}")
-
-        asyncio.create_task(_baixar_em_bg())
+        print("[AVISO] LOLA DEM não encontrado em data/lola_dem/. Usando fallback topográfico.")
     yield
 
 

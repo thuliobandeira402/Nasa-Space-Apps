@@ -18,11 +18,11 @@ LOLA_DIR.mkdir(parents=True, exist_ok=True)
 
 
 
-LOLA_DEM_URL = "https://pgda.gsfc.nasa.gov/data/LOLA_20mpp/LDEM_80S_40MPP_ADJ.TIF"
+LOLA_DEM_URL = "https://pgda.gsfc.nasa.gov/data/LOLA_20mpp/LDEM_80S_240MPP_COMPACT.TIF"
 
 # Detecta se já existe como .TIF ou .TIFF para evitar download duplicado
-_tif_curto = LOLA_DIR / "LDEM_80S_40MPP_ADJ.TIF"
-_tif_longo = LOLA_DIR / "LDEM_80S_40MPP_ADJ.TIFF"
+_tif_curto = LOLA_DIR / "LDEM_80S_240MPP_COMPACT.TIF"
+_tif_longo = LOLA_DIR / "LDEM_80S_240MPP_COMPACT.TIFF"
 LOLA_DEM_PATH = _tif_curto if _tif_curto.exists() else (_tif_longo if _tif_longo.exists() else _tif_curto)
 
 def download_lola_dem(
