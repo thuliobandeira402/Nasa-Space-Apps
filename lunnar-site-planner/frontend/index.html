@@ -5,6 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Lunar Site Planner · NASA Space Apps</title>
   <meta name="description" content="Compare locais e datas de pouso no polo sul lunar: Sol, Terra, energia e comunicação.">
+
+  <!-- 1. TAILWIND CSS (antes do style.css e sem preflight para não sobrescrever seu CSS) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      corePlugins: {
+        preflight: false,
+      }
+    };
+  </script>
+
   <link rel="stylesheet" href="css/style.css">
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" defer></script>
   <script type="module" src="js/main.js"></script>
@@ -75,28 +86,99 @@
     <section id="resultados" class="results" aria-labelledby="h-resultados">
       <h2 id="h-resultados" class="sr-only">Resultados da simulação</h2>
 
-      <div class="cards" id="cards">
-        <article class="card verdict" id="card-verdict" data-state="idle">
-          <h3>Viabilidade</h3>
-          <p class="big" id="verdict-text">—</p>
-          <ul class="checks only-engineer" id="verdict-checks"></ul>
-        </article>
-        <article class="card">
-          <h3>☀️ Luz solar</h3>
-          <p class="big" id="m-sun-frac">—</p>
-          <p class="hint" id="m-sun-next">—</p>
-        </article>
-        <article class="card">
-          <h3>🌍 Terra visível</h3>
-          <p class="big" id="m-earth-frac">—</p>
-          <p class="hint" id="m-earth-next">—</p>
-        </article>
-        <article class="card only-engineer">
-          <h3>Maior noite contínua</h3>
-          <p class="big" id="m-dark">—</p>
-          <p class="hint">Sem Sol acima do horizonte</p>
-        </article>
-      </div>
+      <!-- 2. MARKUP DOS CARDS DE KPI EM TEMPO REAL (substitui o antigo <div class="cards">) -->
+      <section aria-label="Indicadores Operacionais da Missão" class="mb-6 space-y-3">
+        <div class="flex items-center justify-between text-xs text-slate-400 px-1">
+          <span class="uppercase tracking-wider font-semibold text-slate-300">Telemetria em Tempo Real</span>
+          <span id="kpi-sim-clock" class="font-mono text-slate-300">T+ --:--:-- UTC</span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4" id="cards">
+          <!-- CARD 1: Elevação Solar -->
+          <article class="rounded-xl border border-slate-800 bg-slate-900/80 p-4 flex flex-col justify-between">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs font-medium uppercase tracking-wider text-slate-400">☀️ Elevação Solar</span>
+              <span id="kpi-sun-status" class="px-2 py-0.5 text-xs font-semibold rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                --
+              </span>
+            </div>
+            <div class="my-3">
+              <div id="kpi-sun-elevation" class="text-3xl font-bold font-mono text-amber-400">+0.00°</div>
+              <p id="kpi-sun-trend" class="text-xs text-slate-400 mt-1 only-engineer">Aguardando simulação...</p>
+            </div>
+            <div>
+              <div class="flex justify-between text-xs text-slate-400 mb-1">
+                <span>Incidência na janela</span>
+                <span id="kpi-sun-pct" class="font-mono text-slate-200">0%</span>
+              </div>
+              <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                <div id="kpi-sun-progress" class="h-full bg-amber-400 transition-all duration-500" style="width: 0%"></div>
+              </div>
+            </div>
+          </article>
+
+          <!-- CARD 2: Countdown Sunset / Sunrise -->
+          <article class="rounded-xl border border-slate-800 bg-slate-900/80 p-4 flex flex-col justify-between">
+            <div class="flex items-center justify-between gap-2">
+              <span id="kpi-sunset-label" class="text-xs font-medium uppercase tracking-wider text-slate-400">
+                Próximo Sunset
+              </span>
+              <span class="text-xs font-mono text-amber-400/80">HORIZONTE</span>
+            </div>
+            <div class="my-3">
+              <div id="kpi-sunset-countdown" class="text-2xl lg:text-3xl font-bold font-mono text-slate-100 tracking-tight">
+                --:--:--
+              </div>
+              <p id="kpi-sunset-utc" class="text-xs font-mono text-slate-400 mt-1 only-engineer">UTC: --</p>
+            </div>
+            <p class="text-xs text-slate-400">
+              Calculado com máscara topográfica de relevo local.
+            </p>
+          </article>
+
+          <!-- CARD 3: Janelas de Comunicação DTE & Earthset -->
+          <article class="rounded-xl border border-slate-800 bg-slate-900/80 p-4 flex flex-col justify-between">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs font-medium uppercase tracking-wider text-slate-400">🌍 Comunicação DTE</span>
+              <span id="kpi-earth-status" class="px-2 py-0.5 text-xs font-semibold rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/40">
+                --
+              </span>
+            </div>
+            <div class="my-3">
+              <div class="flex items-baseline gap-2">
+                <span id="kpi-earth-elevation" class="text-3xl font-bold font-mono text-sky-400">+0.00°</span>
+                <span id="kpi-comm-pct" class="text-xs font-mono text-slate-400">0% visada</span>
+              </div>
+              <div class="mt-1 flex items-center gap-1.5 text-xs">
+                <span id="kpi-earthset-label" class="text-slate-400">Earthset em:</span>
+                <span id="kpi-earthset-countdown" class="font-mono font-semibold text-sky-300">--:--:--</span>
+              </div>
+            </div>
+            <div id="kpi-overlap-hours" class="text-xs font-medium text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 rounded-lg px-2.5 py-1.5">
+              0h simultâneas (Sol + Terra)
+            </div>
+          </article>
+
+          <!-- CARD 4: Alertas Visuais & Status Operacional -->
+          <article id="kpi-alerts-container" class="rounded-xl border border-slate-800 bg-slate-900/80 p-4 flex flex-col justify-between">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs font-medium uppercase tracking-wider text-slate-400">Status & Alertas</span>
+              <span id="kpi-alert-badge" class="px-2 py-0.5 text-xs font-semibold rounded-full bg-slate-800 text-slate-300">
+                AGUARDANDO
+              </span>
+            </div>
+            <div class="my-3">
+              <h3 id="kpi-alert-title" class="text-base font-semibold text-slate-100">Inicializando Telemetria</h3>
+              <p id="kpi-alert-desc" class="text-xs text-slate-300/90 mt-1 leading-relaxed">
+                Selecione um local de pouso no Polo Sul lunar para monitorar janelas críticas.
+              </p>
+            </div>
+            <div class="text-[11px] text-slate-400">
+              Clique na timeline para inspecionar alertas em qualquer data.
+            </div>
+          </article>
+        </div>
+      </section>
 
       <p class="explainer only-explorer" id="explainer">
         Escolha um local e uma data e clique em <strong>Simular</strong>.
@@ -113,6 +195,12 @@
           <h3 id="h-sky">Vista do horizonte (azimute × elevação)</h3>
           <p class="hint only-explorer">É o céu visto do local de pouso. O Sol rasante é típico do polo sul.</p>
           <div id="chart-sky" class="chart" role="img" aria-label="Trajetória do Sol e da Terra no céu local"></div>
+        </section>
+
+        <!-- Container opcional caso queira exibir o gráfico 3D da topografia junto aos outros -->
+        <section class="panel chart-panel only-engineer" aria-labelledby="h-topo">
+          <h3 id="h-topo">Topografia 3D do local de pouso (LOLA DEM)</h3>
+          <div id="chart-topo3d" class="chart" role="img" aria-label="Mapa topográfico 3D do local de pouso"></div>
         </section>
       </div>
 
