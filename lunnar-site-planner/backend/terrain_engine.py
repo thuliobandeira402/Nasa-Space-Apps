@@ -115,7 +115,7 @@ def aplicar_obstrucao_terreno(dados_efemerides: dict, perfil_horizonte: dict) ->
     horizonte_direcao_terra = horizonte_360[terra_az_idx]
 
     # Há visibilidade real somente se o astro estiver ACIMA da montanha naquela direção
-    sol_visivel = sol_alt > horizonte_direcao_sol
+    sol_visivel = (sol_alt + 0.265) > horizonte_direcao_sol
     terra_visivel = terra_alt > horizonte_direcao_terra
 
     # Margem livre acima do horizonte (positivo = visível, negativo = quantos graus está escondido atrás da cratera)

@@ -71,12 +71,15 @@ def analisar_metricas(dados: dict) -> dict:
     if len(alt_sun) == 0:
         raise ValueError("As séries temporais de efemérides estão vazias.")
 
-    # Usa a visibilidade com topografia (se o terrain_engine rodou) ou horizonte ideal (> 0°)
-    sol_visivel = np.array(dados.get("sol_visivel_bool", alt_sun > 0), dtype=bool)
-    terra_visivel = np.array(dados.get("terra_visivel_bool", alt_earth > 0), dtype=bool)
+    SOLAR_SEMIDIAMETER_DEG = 0.265
+
+    # Usa a visibilidade com topografia (se o terrain_engine rodou) ou horizonte ideal (> -0.265°)
+    sol_visivel_sem_relevo = (alt_sun + SOLAR_SEMIDIAMETER_DEG) > 0.0
+    sol_visivel = np.array(dados.get("sol_visivel_bool", sol_visivel_sem_relevo), dtype=bool)
+    terra_visivel = np.array(dados.get("terra_visivel_bool", alt_earth > 0.0), dtype=bool)
 
     # 1. Métricas de Iluminação e Perda Topográfica
-    pct_luz_sem_relevo = float(np.mean(alt_sun > 0) * 100.0)
+    pct_luz_sem_relevo = float(np.mean(sol_visivel_sem_relevo) * 100.0)
     pct_luz_real = float(np.mean(sol_visivel) * 100.0)
     perda_sombra_terreno_pct = max(0.0, pct_luz_sem_relevo - pct_luz_real)
 
