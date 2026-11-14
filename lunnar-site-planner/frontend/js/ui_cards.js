@@ -105,8 +105,8 @@ export function syncStepMetrics(stepIndex = 0) {
   uiState.anchorWallMs = Date.now();
 
   const frame = simData.timeline[safeIdx];
-  const slopeOk = simData.slope_deg <= 15.0;
-  const sunOk = frame.sun_visible;
+  const slopeKnown = typeof simData.slope_deg === 'number';
+  const slopeOk = !slopeKnown || simData.slope_deg <= 15.0;  const sunOk = frame.sun_visible;
   const commOk = frame.earth_visible;
   const instantGo = slopeOk && sunOk && commOk;
 
@@ -126,8 +126,8 @@ export function syncStepMetrics(stepIndex = 0) {
   const checksList = document.getElementById('verdict-checks');
   if (checksList) {
     checksList.innerHTML = `
-      <li>${slopeOk ? '✅' : '❌'} Topografia (Slope): <strong>${simData.slope_deg}°</strong> (máx. 15°)</li>
-      <li>${sunOk ? '✅' : '❌'} Sol agora: <strong>${frame.sun_elevation_deg}°</strong> (Pôr do sol: ${simData.sunset_duration_min} min)</li>
+      <li>${slopeKnown ? (slopeOk ? '✅' : '❌') : '➖'} Topografia (Slope): <strong>${slopeKnown ? simData.slope_deg + '°' : 'sem dado'}</strong> (máx. 15°)</li>
+      <li>${sunOk ? '✅' : '❌'} Sol agora: <strong>${frame.sun_elevation_deg}°</strong></li>
       <li>${commOk ? '✅' : '❌'} Sinal Terra (DTE): <strong>${frame.earth_elevation_deg}°</strong></li>
     `;
   }
