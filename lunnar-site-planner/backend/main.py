@@ -5,9 +5,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from sites_catalog import SITES_CATALOG
+from sites_catalog import SITES_CATALOG, get_site_by_id
 from ephemeris_engine import calcular_visibilidade
-from terrain_engine import gerar_perfil_horizonte_360, aplicar_obstrucao_terreno
+from terrain_engine import gerar_perfil_horizonte_360, aplicar_obstrucao_terreno, identificar_site_conhecido
 from metrics_analyzer import analisar_metricas
 
 # 1. Inicializa a aplicação FastAPI
@@ -25,10 +25,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+NOME_PADRAO = "Ponto Customizado"
 
 # 3. Contratos de Entrada (Pydantic Models)
 class SimulacaoRequest(BaseModel):
-    nome_local: str = Field(default="Ponto Customizado")
+    nome_local: str = Field(default=NOME_PADRAO)
     nome: str | None = Field(default=None)
     lat: float = Field(..., ge=-90.0, le=90.0)
     lon: float = Field(..., ge=-180.0, le=180.0)
@@ -85,14 +86,26 @@ def simular_local(req: SimulacaoRequest):
     passo_efetivo = 3 if (req.dias_simulacao > 30 and req.passo_horas == 1) else req.passo_horas
     try:
         # Resolve nome caso o payload envie "nome" em vez de "nome_local"
-        nome_final = req.nome.strip() if (req.nome and req.nome.strip()) else req.nome_local
+        nome_informado = (req.nome or "").strip()
+        nome_local_limpo = (req.nome_local or "").strip()
+        if nome_informado:
+            nome_final = nome_informado
+        elif nome_local_limpo and nome_local_limpo != NOME_PADRAO:
+            nome_final = nome_local_limpo
+        else:
+            site_id = identificar_site_conhecido(req.lat, req.lon)
+            site = get_site_by_id(site_id) if site_id else None
+            nome_final = site["name"] if site else NOME_PADRAO
 
         # Resolve data caso o payload envie "data_inicio": "YYYY-MM-DD"
         ano, mes, dia = req.ano, req.mes, req.dia
         if req.data_inicio:
             partes = req.data_inicio.strip().split("-")
-            if len(partes) == 3:
-                ano, mes, dia = int(partes[0]), int(partes[1]), int(partes[2])
+            if len(partes) != 3:
+                raise ValueError("data_inicio deve estar no formato YYYY-MM-DD")
+            ano, mes, dia = int(partes[0]), int(partes[1]), int(partes[2])
+            if not (1900 <= ano <= 2050):
+                raise ValueError("ano deve estar entre 1900 e 2050 (limite dos kernels SPICE)")
 
         # Passo A: Efemérides via Skyfield + normalização para vetores
         lista_efemerides = calcular_visibilidade(

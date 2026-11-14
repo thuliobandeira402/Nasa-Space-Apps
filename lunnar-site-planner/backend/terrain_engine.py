@@ -4,16 +4,24 @@ from data_loader import get_horizon_profiles
 from sites_catalog import SITES_CATALOG
 
 
-def _identificar_site_conhecido(lat: float, lon: float, tolerancia_graus: float = 0.25) -> str | None:
-    """
-    Verifica se a coordenada informada corresponde a algum local do SITES_CATALOG.
-    Retorna o 'id' do local (ex: 'shackleton_rim') ou None se for um ponto customizado.
-    """
-    for site in SITES_CATALOG:
-        if abs(site["lat"] - lat) <= tolerancia_graus and abs(site["lon"] - lon) <= tolerancia_graus:
-            return site["id"]
-    return None
+import math
 
+def _distancia_angular_graus(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Distância sobre a superfície (em graus de arco) entre dois pontos. 1° ≈ 30 km na Lua."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dlat, dlon = p2 - p1, math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlon / 2) ** 2
+    return math.degrees(2 * math.asin(min(1.0, math.sqrt(a))))
+
+
+def identificar_site_conhecido(lat: float, lon: float, tolerancia_graus: float = 0.25) -> str | None:
+    """Retorna o id do local do catálogo mais próximo dentro da tolerância (~7,6 km), ou None."""
+    melhor_id, melhor_dist = None, tolerancia_graus
+    for site in SITES_CATALOG:
+        d = _distancia_angular_graus(lat, lon, site["lat"], site["lon"])
+        if d <= melhor_dist:
+            melhor_id, melhor_dist = site["id"], d
+    return melhor_id
 
 def gerar_perfil_horizonte_360(lat: float, lon: float, elevacao_m: float = 0.0) -> dict:
     """
@@ -23,7 +31,7 @@ def gerar_perfil_horizonte_360(lat: float, lon: float, elevacao_m: float = 0.0) 
     """
     azimutes = np.arange(0, 360, 1)
     profiles = get_horizon_profiles()
-    site_id = _identificar_site_conhecido(lat, lon)
+    site_id = identificar_site_conhecido(lat, lon)
 
     # Caso 1: Local conhecido com perfil topográfico mapeado no JSON
     if site_id and site_id in profiles:
