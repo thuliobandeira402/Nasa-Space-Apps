@@ -1,16 +1,12 @@
 # backend/terrain_engine.py
-import numpy as np
-from data_loader import get_horizon_profiles
-from sites_catalog import SITES_CATALOG
-from data_loader import get_horizon_profiles, LOLA_DIR
-from lola_horizon import horizonte_lola
-
-ARQUIVO_DEM = LOLA_DIR / "LDEM_80S_40MPP_ADJ.TIFF"   
-
 import math
+import numpy as np
+from data_loader import get_horizon_profiles, LOLA_DEM_PATH
+from sites_catalog import SITES_CATALOG
+from lola_horizon import horizonte_lola, extrair_malha_terreno_lola
+
 
 def _distancia_angular_graus(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Distância sobre a superfície (em graus de arco) entre dois pontos. 1° ≈ 30 km na Lua."""
     p1, p2 = math.radians(lat1), math.radians(lat2)
     dlat, dlon = p2 - p1, math.radians(lon2 - lon1)
     a = math.sin(dlat / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlon / 2) ** 2
@@ -18,7 +14,6 @@ def _distancia_angular_graus(lat1: float, lon1: float, lat2: float, lon2: float)
 
 
 def identificar_site_conhecido(lat: float, lon: float, tolerancia_graus: float = 0.25) -> str | None:
-    """Retorna o id do local do catálogo mais próximo dentro da tolerância (~7,6 km), ou None."""
     melhor_id, melhor_dist = None, tolerancia_graus
     for site in SITES_CATALOG:
         d = _distancia_angular_graus(lat, lon, site["lat"], site["lon"])
@@ -26,29 +21,70 @@ def identificar_site_conhecido(lat: float, lon: float, tolerancia_graus: float =
             melhor_id, melhor_dist = site["id"], d
     return melhor_id
 
+
+def _gerar_malha_sintetica(lat: float, lon: float, elevacao_m: float, grid_size: int = 64) -> dict:
+    """Gera malha 3D determinística quando o ponto está fora da cobertura do GeoTIFF polar (-80°S)."""
+    seed_local = int(abs(lat) * 10000 + abs(lon) * 1000 + abs(elevacao_m)) % (2**31 - 1)
+    rng = np.random.default_rng(seed_local)
+    fator_polar = (abs(lat) / 90.0) ** 2
+
+    y, x = np.mgrid[-1.0:1.0:complex(0, grid_size), -1.0:1.0:complex(0, grid_size)]
+    z = np.zeros((grid_size, grid_size), dtype=float)
+
+    for _ in range(5):
+        cx, cy = rng.uniform(-0.7, 0.7), rng.uniform(-0.7, 0.7)
+        sigma = rng.uniform(0.18, 0.45)
+        amp = rng.uniform(-120.0, 180.0) * (0.4 + 0.6 * fator_polar)
+        z += amp * np.exp(-((x - cx) ** 2 + (y - cy) ** 2) / (2.0 * sigma ** 2))
+
+    z += elevacao_m
+    pixel_m = 40.0
+    dy, dx = np.gradient(z, pixel_m)
+    slope_matrix = np.degrees(np.arctan(np.hypot(dx, dy)))
+    c = grid_size // 2
+    slope_deg = float(np.round(np.mean(slope_matrix[c - 2:c + 3, c - 2:c + 3]), 2))
+
+    min_elev, max_elev = float(np.min(z)), float(np.max(z))
+    span = max(1.0, max_elev - min_elev)
+    heights_norm = ((z - np.mean(z)) / span).ravel()
+
+    return {
+        "size": grid_size,
+        "pixel_m": pixel_m,
+        "min_elevation_m": round(min_elev, 1),
+        "max_elevation_m": round(max_elev, 1),
+        "center_elevation_m": round(float(z[c, c]), 1),
+        "slope_deg": slope_deg,
+        "heights": np.round(heights_norm, 4).tolist(),
+    }
+
+
 def gerar_perfil_horizonte_360(lat: float, lon: float, elevacao_m: float = 0.0) -> dict:
-    """
-    Gera a elevação do horizonte (em graus) para todos os 360 graus de azimute (0° a 359°).
-    - Se for um local catalogado em horizon_profiles.json, constrói as montanhas/crateras reais.
-    - Se for uma coordenada customizada, gera um relevo determinístico baseado na latitude e altitude.
-    """
     azimutes = np.arange(0, 360, 1)
     profiles = get_horizon_profiles()
     site_id = identificar_site_conhecido(lat, lon)
-    if lat <= -80.0 and ARQUIVO_DEM.exists():
+
+    # Caso 1: Cobertura real do DEM LOLA no Polo Sul (lat <= -80°)
+    if lat <= -80.0 and LOLA_DEM_PATH.exists():
         try:
-            horizonte_real = horizonte_lola(lat, lon, str(ARQUIVO_DEM))
+            horizonte_real = horizonte_lola(lat, lon, str(LOLA_DEM_PATH))
+            malha = extrair_malha_terreno_lola(lat, lon, str(LOLA_DEM_PATH), grid_size=64)
             return {
-                "modo_terreno": "NASA LOLA LDEM (dados reais, 40 m/px)",
+                "modo_terreno": "NASA LOLA LDEM (Real Data, 40 m/px)",
                 "site_id_detectado": site_id,
                 "azimutes_graus": azimutes.tolist(),
                 "elevacao_horizonte_graus": horizonte_real,
-                "obstaculos_principais": []
+                "obstaculos_principais": [],
+                "terrain_grid": malha,
+                "slope_deg_real": malha["slope_deg"],
+                "center_elevation_m_real": malha["center_elevation_m"],
             }
         except Exception as e:
-            print(f"[LOLA] falhou ({e}); usando modelo de horizonte aproximado")
+            print(f"[LOLA] Falha ao ler DEM ({e}); utilizando perfil catalogado/sintético.")
 
-    # Caso 1: Local conhecido com perfil topográfico mapeado no JSON
+    malha_fallback = _gerar_malha_sintetica(lat, lon, elevacao_m)
+
+    # Caso 2: Sítio catalogado em horizon_profiles.json
     if site_id and site_id in profiles:
         cfg = profiles[site_id]
         base_deg = float(cfg.get("base_horizon_deg", 0.0))
@@ -59,62 +95,60 @@ def gerar_perfil_horizonte_360(lat: float, lon: float, elevacao_m: float = 0.0) 
             centro = float(obs["az_center"])
             largura = float(obs["width"])
             altura_max = float(obs["max_elev_deg"])
-
-            # Distância angular circular (resolve a virada de 359° para 0°)
             diff = np.minimum(np.abs(azimutes - centro), 360.0 - np.abs(azimutes - centro))
-            # Curva Gaussiana suave simulando o formato da montanha/borda de cratera
             curva_montanha = altura_max * np.exp(-0.5 * (diff / (largura / 2.5)) ** 2)
             horizonte = np.maximum(horizonte, base_deg + curva_montanha)
 
-        modo_terreno = f"Perfil Topográfico Mapeado ({site_id})"
+        return {
+            "modo_terreno": f"Cataloged Topographic Profile ({site_id})",
+            "site_id_detectado": site_id,
+            "azimutes_graus": azimutes.tolist(),
+            "elevacao_horizonte_graus": np.round(horizonte, 2).tolist(),
+            "obstaculos_principais": obstaculos_info,
+            "terrain_grid": malha_fallback,
+            "slope_deg_real": malha_fallback["slope_deg"],
+            "center_elevation_m_real": elevacao_m,
+        }
 
-    # Caso 2: Coordenada customizada escolhida pelo usuário
+    # Caso 3: Ponto customizado fora de -80°S -> Modelo Topográfico Sintético Determinístico
+    fator_polar = (abs(lat) / 90.0) ** 2
+    seed_local = int(abs(lat) * 10000 + abs(lon) * 1000 + abs(elevacao_m)) % (2**31 - 1)
+    rng = np.random.default_rng(seed_local)
+
+    if elevacao_m >= 1500:
+        base_deg = -0.4
+    elif elevacao_m < 0:
+        base_deg = 2.0 * fator_polar + 0.5
     else:
-        # Quanto mais próximo do Polo Sul (|lat| -> 90), mais acidentado é o terreno (crateras profundas)
-        fator_polar = (abs(lat) / 90.0) ** 2
+        base_deg = 0.5 * fator_polar
 
-        # Seed fixa baseada na coordenada: a mesma coordenada sempre gera o mesmo relevo!
-        seed_local = int(abs(lat) * 10000 + abs(lon) * 1000 + abs(elevacao_m)) % (2**31 - 1)
-        rng = np.random.default_rng(seed_local)
+    horizonte = np.full(360, base_deg, dtype=float)
+    obstaculos_info = []
 
-        # Se estiver no topo de um maciço (>1500m), o horizonte base é negativo; em cratera (<0m), é alto
-        if elevacao_m >= 1500:
-            base_deg = -0.4
-        elif elevacao_m < 0:
-            base_deg = 2.0 * fator_polar + 0.5
-        else:
-            base_deg = 0.5 * fator_polar
-
-        horizonte = np.full(360, base_deg, dtype=float)
-        obstaculos_info = []
-
-        # Gera 4 feições topográficas locais (colinas/bordas de cratera)
-        for i in range(4):
-            centro = int(rng.integers(0, 360))
-            largura = int(rng.integers(25, 65))
-            altura_max = float(np.round(rng.uniform(0.8, 4.2) * (0.3 + 0.7 * fator_polar), 2))
-
-            diff = np.minimum(np.abs(azimutes - centro), 360.0 - np.abs(azimutes - centro))
-            curva_montanha = altura_max * np.exp(-0.5 * (diff / (largura / 2.5)) ** 2)
-            horizonte = np.maximum(horizonte, base_deg + curva_montanha)
-
-            obstaculos_info.append({
-                "az_center": centro,
-                "width": largura,
-                "max_elev_deg": altura_max,
-                "feature": f"Relevo Local #{i+1}"
-            })
-
-        modo_terreno = "Modelo Topográfico Sintético (Parametrizado por Latitude/Altitude)"
+    for i in range(4):
+        centro = int(rng.integers(0, 360))
+        largura = int(rng.integers(25, 65))
+        altura_max = float(np.round(rng.uniform(0.8, 4.2) * (0.3 + 0.7 * fator_polar), 2))
+        diff = np.minimum(np.abs(azimutes - centro), 360.0 - np.abs(azimutes - centro))
+        curva_montanha = altura_max * np.exp(-0.5 * (diff / (largura / 2.5)) ** 2)
+        horizonte = np.maximum(horizonte, base_deg + curva_montanha)
+        obstaculos_info.append({
+            "az_center": centro,
+            "width": largura,
+            "max_elev_deg": altura_max,
+            "feature": f"Local Relief #{i+1}",
+        })
 
     return {
-        "modo_terreno": modo_terreno,
+        "modo_terreno": "Synthetic Topographic Model (Latitude/Elevation Parameterized)",
         "site_id_detectado": site_id,
         "azimutes_graus": azimutes.tolist(),
         "elevacao_horizonte_graus": np.round(horizonte, 2).tolist(),
-        "obstaculos_principais": obstaculos_info
+        "obstaculos_principais": obstaculos_info,
+        "terrain_grid": malha_fallback,
+        "slope_deg_real": malha_fallback["slope_deg"],
+        "center_elevation_m_real": elevacao_m,
     }
-
 
 def aplicar_obstrucao_terreno(dados_efemerides: dict, perfil_horizonte: dict) -> dict:
     """

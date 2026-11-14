@@ -54,6 +54,9 @@ def horizonte_lola(lat: float, lon: float, dem_path: str,
         z = src.read(1, window=win, boundless=True, fill_value=np.nan).astype("float64")
         if src.nodata is not None:
             z[z == src.nodata] = np.nan
+        scale = float(src.scales[0]) if src.scales else 1.0
+        offset = float(src.offsets[0]) if src.offsets else 0.0
+        z = z * scale + offset
         t = src.window_transform(win)
     col0_x = t.c + 0.5 * t.a
     row0_y = t.f + 0.5 * t.e
@@ -77,6 +80,9 @@ def extrair_malha_terreno_lola(lat: float, lon: float, dem_path: str, grid_size:
         z = src.read(1, window=win, boundless=True, fill_value=np.nan).astype("float64")
         if src.nodata is not None:
             z[z == src.nodata] = np.nan
+        scale = float(src.scales[0]) if src.scales else 1.0
+        offset = float(src.offsets[0]) if src.offsets else 0.0
+        z = z * scale + offset
 
     if np.all(np.isnan(z)):
         raise ValueError("Janela sem dados válidos no DEM LOLA.")

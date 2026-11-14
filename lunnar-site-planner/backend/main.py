@@ -17,14 +17,22 @@ from terrain_engine import gerar_perfil_horizonte_360, aplicar_obstrucao_terreno
 from metrics_analyzer import analisar_metricas
 
 
+import asyncio
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if LOLA_DEM_PATH.exists():
         print("LOLA DEM já está instalado. Ignorando download.")
         app.state.lola_dem_path = LOLA_DEM_PATH
     else:
-        print("LOLA DEM não encontrado. Iniciando download...")
-        app.state.lola_dem_path = await run_in_threadpool(download_lola_dem)
+        print("LOLA DEM não encontrado. Iniciando download em segundo plano...")
+        async def _baixar_em_bg():
+            try:
+                app.state.lola_dem_path = await run_in_threadpool(download_lola_dem)
+            except Exception as e:
+                print(f"[AVISO] Falha ao baixar LOLA DEM em segundo plano: {e}")
+
+        asyncio.create_task(_baixar_em_bg())
     yield
 
 
@@ -306,10 +314,11 @@ class PousoRequest(BaseModel):
     site_name: str | None = None
     lat: float = Field(..., ge=-90.0, le=90.0)
     lon: float = Field(..., ge=-360.0, le=360.0)
+    elevacao_m: float | None = Field(default=None, ge=-10000.0, le=15000.0)
     start_date: str = Field(default="2027-03-01")
     days: int = Field(default=30, ge=1, le=90)
     step_min: int = Field(default=60, ge=5, le=360)
-
+    usar_topografia: bool = Field(default=True)
 
 def _normalizar_lon(lon: float) -> float:
     return ((lon + 180.0) % 360.0) - 180.0
@@ -334,17 +343,22 @@ def simular_pouso(req: PousoRequest):
     nome = (req.site_name or "").strip() or (site["name"] if site else NOME_PADRAO)
 
     passo_horas = max(1, min(24, round(req.step_min / 60)))
+    elev_efetiva = (
+        req.elevacao_m
+        if req.elevacao_m is not None
+        else (site["elevation_m"] if site else 0.0)
+    )
+
     res = simular_local(SimulacaoRequest(
         nome=nome,
         lat=req.lat,
         lon=lon,
-        elevacao_m=site["elevation_m"] if site else 0.0,
+        elevacao_m=elev_efetiva,
         data_inicio=req.start_date,
         dias_simulacao=req.days,
         passo_horas=passo_horas,
-        usar_topografia=True,
-    ))
-
+        usar_topografia=req.usar_topografia,
+    ))  
     s = res["series_temporais"]
     m = res["metricas_resumo"]
     perfil = res["perfil_horizonte_360"]
@@ -414,6 +428,9 @@ def simular_pouso(req: PousoRequest):
             m["contexto_educacional"],
         ],
         "timeline": timeline,
+        "evento_sol": m["evento_sol"],
+        "evento_terra": m["evento_terra"],
+        "metricas_resumo": m,
     }
 
 

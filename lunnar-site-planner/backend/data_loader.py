@@ -59,13 +59,26 @@ def download_lola_dem(
             if status != 200:
                 raise RuntimeError(f"Falha no download do LOLA DEM: HTTP {status}")
 
+            total_bytes = int(response.headers.get("Content-Length", 0))
+            baixados = 0
+            ultimo_mb_log = 0
+
             with temporary_path.open("wb") as output:
                 while True:
                     chunk = response.read(chunk_size)
                     if not chunk:
                         break
                     output.write(chunk)
-
+                    baixados += len(chunk)
+                    mb_atual = baixados // (1024 * 1024)
+                    if mb_atual >= ultimo_mb_log + 10:
+                        ultimo_mb_log = mb_atual
+                        if total_bytes > 0:
+                            pct = (baixados / total_bytes) * 100
+                            print(f"  [LOLA DEM] {mb_atual} MB / {total_bytes // (1024*1024)} MB ({pct:.1f}%)")
+                        else:
+                            print(f"  [LOLA DEM] {mb_atual} MB baixados...")
+                            
         if not is_valid_tiff(temporary_path):
             raise RuntimeError(
                 "O download terminou, mas o arquivo recebido não parece ser um TIFF válido."
