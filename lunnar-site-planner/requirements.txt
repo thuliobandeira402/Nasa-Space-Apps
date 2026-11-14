@@ -1,0 +1,41 @@
+# Servidor Web e API REST
+
+fastapi>=0.115.0
+
+uvicorn[standard]>=0.32.0
+
+pydantic>=2.9.0
+
+
+
+# Motor Astronômico e Efemérides NASA/JPL (SPICE kernels)
+
+skyfield>=1.49
+
+jplephem>=2.22
+
+sgp4>=2.23
+
+
+
+# Processamento Matemático, Vetorial e Cientifico
+
+numpy>=1.26.0
+
+scipy>=1.14.0
+
+
+
+# Leitura de arquivos topográficos GeoTIFF / LOLA DEM (Opcional/Escalabilidade)
+
+tifffile>=2024.8.30
+
+pillow>=10.4.0
+
+
+
+# Utilitários HTTP
+
+requests>=2.32.0
+
+httpx>=0.27.0
