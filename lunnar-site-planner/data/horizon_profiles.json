@@ -1,0 +1,29 @@
+{
+  "shackleton_rim": {
+    "base_horizon_deg": 0.8,
+    "obstacles": [
+      {"az_center": 45, "width": 35, "max_elev_deg": 2.4, "feature": "Pico Adjacente Shackleton A"},
+      {"az_center": 190, "width": 50, "max_elev_deg": 1.9, "feature": "Crista Sul de Shackleton"},
+      {"az_center": 310, "width": 25, "max_elev_deg": 3.1, "feature": "Borda Elevada Oeste"}
+    ]
+  },
+  "malapert_massif": {
+    "base_horizon_deg": -0.5,
+    "obstacles": [
+      {"az_center": 120, "width": 40, "max_elev_deg": 1.5, "feature": "Ombro Leste de Malapert"},
+      {"az_center": 260, "width": 30, "max_elev_deg": 1.2, "feature": "Encosta Oeste"}
+    ]
+  },
+  "cabeus_crater": {
+    "base_horizon_deg": 3.8,
+    "obstacles": [
+      {"az_center": 0, "width": 90, "max_elev_deg": 6.5, "feature": "Parede Norte da Cratera Cabeus"},
+      {"az_center": 140, "width": 70, "max_elev_deg": 5.2, "feature": "Borda Sudeste de Cabeus"},
+      {"az_center": 270, "width": 80, "max_elev_deg": 7.0, "feature": "Escarpa Oeste Profunda"}
+    ]
+  },
+  "apollo_11": {
+    "base_horizon_deg": 0.1,
+    "obstacles": []
+  }
+}
