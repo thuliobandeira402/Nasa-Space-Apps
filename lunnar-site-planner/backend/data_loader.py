@@ -17,10 +17,8 @@ LOLA_DIR.mkdir(parents=True, exist_ok=True)
 
 
 
-LOLA_DEM_URL = (
-    "https://pgda.gsfc.nasa.gov/data/LOLA_20mpp/"
-    "LDEM_80S_40MPP_ADJ.TIFF"
-)
+LOLA_DEM_URL = "https://pgda.gsfc.nasa.gov/data/LOLA_20mpp/LDEM_80S_40MPP_ADJ.TIF"
+
 LOLA_DEM_PATH = LOLA_DIR / "LDEM_80S_40MPP_ADJ.TIFF"
 
 
