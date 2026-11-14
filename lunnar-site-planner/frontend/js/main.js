@@ -1,5 +1,8 @@
-// frontend/js/main.js - Orquestrador principal: conecta formulário, API, cards, gráficos e cena 3D
-import { PRESET_SITES, getFases, getViagem, simularPouso } from "./api.js";
+/**
+ * Controlador principal da Aplicação Frontend (NASA Lunar Site Planner)
+ */
+
+import { PRESET_SITES, getSites, getFases, getViagem, simularPouso } from "./api.js";
 import { mountOrUpdate3DScene } from "./app.js";
 import { renderElevationTimeline, renderSkyplotPolar, renderComparisonChart } from "./charts.js";
 import {
@@ -12,6 +15,7 @@ import {
 const $ = (id) => document.getElementById(id);
 
 const state = {
+  sites: [...PRESET_SITES],
   lastSimData: null,
   lastViagemData: null,
   lastFasesData: null,
@@ -25,7 +29,7 @@ function setStatus(msg, isError = false) {
   el.classList.toggle("error", isError);
 }
 
-/* ---------- Modo Engenheiro / Explorador ---------- */
+/* ---------- Gestão de Modos (Engenheiro / Explorador) ---------- */
 function definirModo(modo) {
   document.body.dataset.mode = modo;
   const radio = $(`mode-${modo}`);
@@ -48,19 +52,29 @@ function iniciarModo() {
   });
 }
 
-/* ---------- Catálogo de Locais ---------- */
+/* ---------- Catálogo de Locais (Via Backend /api/sites) ---------- */
+async function carregarSites() {
+  const res = await getSites();
+  const lista = res?.data?.sites;
+  if (Array.isArray(lista) && lista.length > 0) {
+    state.sites = lista;
+  }
+  popularSites();
+  aplicarSite();
+}
+
 function popularSites() {
   const select = $("site");
   if (!select) return;
   select.innerHTML =
-    PRESET_SITES.map((s) => `<option value="${s.id}">${s.name}</option>`).join("") +
-    `<option value="custom">Coordenadas personalizadas...</option>`;
+    state.sites.map((s) => `<option value="${s.id}">${s.name}</option>`).join("") +
+    `<option value="custom">Coordenadas personalizadas (Lat/Lon)...</option>`;
 }
 
 function aplicarSite() {
   const select = $("site");
   if (!select) return;
-  const s = PRESET_SITES.find((x) => x.id === select.value);
+  const s = state.sites.find((x) => x.id === select.value);
   if (s) {
     $("lat").value = s.lat;
     $("lon").value = s.lon;
@@ -70,30 +84,30 @@ function aplicarSite() {
 /* ---------- Leitura do Formulário ---------- */
 function lerParametros() {
   const siteId = $("site")?.value || null;
-  const site = PRESET_SITES.find((s) => s.id === siteId);
+  const site = state.sites.find((s) => s.id === siteId);
   const lat = parseFloat($("lat").value);
   const lon = parseFloat($("lon").value);
   const start_date = $("start").value || "2027-03-01";
   const days = parseInt($("days").value, 10) || 30;
-  const step_minutes = parseInt($("step").value, 10) || 60;
+  const step_min = parseInt($("step").value, 10) || 60;
 
   return {
-    site_id: site ? site.id : null,
+    site_id: site ? site.id : "custom",
     site_name: site ? site.name : `Ponto (${lat}°, ${lon}°)`,
     lat,
     lon,
     start_date,
     days,
-    step_minutes,
+    step_min,
   };
 }
 
-/* ---------- Execução da Simulação ---------- */
+/* ---------- Execução da Simulação Principal ---------- */
 async function rodarSimulacao(ev) {
   if (ev) ev.preventDefault();
   const submitBtn = $("scenario-form")?.querySelector('button[type="submit"]');
   if (submitBtn) submitBtn.disabled = true;
-  setStatus("Calculando efemérides e iluminação lunar...");
+  setStatus("Processando efemérides NASA SPICE e malha LOLA...");
 
   try {
     const params = lerParametros();
@@ -125,8 +139,8 @@ async function rodarSimulacao(ev) {
 
     setStatus(
       source === "online"
-        ? "Simulação concluída (NASA/JPL SPICE)."
-        : "Simulação concluída (modo contingência offline)."
+        ? "Simulação concluída com dados reais (NASA/JPL SPICE + LRO/LOLA)."
+        : "Simulação concluída (modo contingência offline ativo)."
     );
   } catch (err) {
     console.error(err);
@@ -139,9 +153,9 @@ async function rodarSimulacao(ev) {
 /* ---------- Comparador de Cenários ---------- */
 async function adicionarComparacao() {
   if (state.scenarios.length >= 6) {
-    return setStatus("Máximo de 6 cenários atingido.", true);
+    return setStatus("Limite máximo de 6 cenários atingido.", true);
   }
-  setStatus("Adicionando cenário à comparação...");
+  setStatus("Adicionando cenário ao comparador...");
   try {
     const params = lerParametros();
     const res = await simularPouso(params);
@@ -150,7 +164,7 @@ async function adicionarComparacao() {
     state.scenarios.push(simData);
     addScenarioToComparator(simData);
     renderComparisonChart(state.scenarios, "chart-compare");
-    setStatus("Cenário adicionado ao comparador.");
+    setStatus("Cenário adicionado com sucesso.");
   } catch (err) {
     setStatus(`Falha ao comparar: ${err.message}`, true);
   }
@@ -164,10 +178,9 @@ function limparComparacao() {
 }
 
 /* ---------- Inicialização ---------- */
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
   iniciarModo();
-  popularSites();
-  aplicarSite();
+  await carregarSites();
 
   $("site")?.addEventListener("change", aplicarSite);
   ["lat", "lon"].forEach((id) => {
@@ -180,6 +193,5 @@ document.addEventListener("DOMContentLoaded", () => {
   $("btn-add")?.addEventListener("click", adicionarComparacao);
   $("btn-clear")?.addEventListener("click", limparComparacao);
 
-  // Dispara a primeira simulação automaticamente para renderizar o 3D e os KPIs ao abrir
   rodarSimulacao();
 });

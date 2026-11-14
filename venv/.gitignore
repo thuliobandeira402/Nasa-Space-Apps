@@ -1,0 +1,13 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.TIF
+*.tif
+*.TIFF
+*.tiff
+*.bsp
+*.bpc
+data/kernels/
+data/lola_dem/
+.vscode/
