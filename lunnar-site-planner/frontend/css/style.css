@@ -201,7 +201,44 @@ select:focus-visible,
   border-radius: 10px;
   border: 1px solid var(--line);
 }
-#react-3d-root label { margin: 0; }
+
+.hud-3d {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: 10px;
+  background: rgba(6, 10, 24, 0.78);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+  font-size: 0.75rem;
+  pointer-events: none;
+}
+.hud-3d > div {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.hud-3d span { color: var(--muted); font-weight: 600; }
+.hud-3d em { font-style: normal; font-weight: 700; }
+.hud-3d em.ok { color: var(--go); }
+.hud-3d em.bad { color: var(--nogo); }
+
+.slider-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding-top: 0.25rem;
+}
+#react-3d-root label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+}
 
 /* gráficos */
 .charts { display: grid; gap: 1.2rem; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }

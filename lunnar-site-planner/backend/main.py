@@ -1,50 +1,40 @@
 # backend/main.py
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from fastapi import FastAPI, HTTPException
+from contextlib import asynccontextmanager
+import numpy as np
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from data_loader import get_sites_catalog
+from starlette.concurrency import run_in_threadpool
+from skyfield import almanac
+
+from data_loader import get_sites_catalog, download_lola_dem, get_planetary_context, LOLA_DEM_PATH
 from sites_catalog import SITES_CATALOG, get_site_by_id
 from ephemeris_engine import calcular_visibilidade
 from terrain_engine import gerar_perfil_horizonte_360, aplicar_obstrucao_terreno, identificar_site_conhecido
 from metrics_analyzer import analisar_metricas
-from contextlib import asynccontextmanager
-from fastapi import FastAPI
-from starlette.concurrency import run_in_threadpool
 
-from data_loader import download_lola_dem
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    dem_path = (
-        Path(__file__).resolve().parent.parent
-        / "data"
-        / "lola_dem"
-        / "LDEM_80S_40MPP_ADJ.TIFF"
-    )
-
-    if dem_path.exists():
+    if LOLA_DEM_PATH.exists():
         print("LOLA DEM já está instalado. Ignorando download.")
-        app.state.lola_dem_path = dem_path
+        app.state.lola_dem_path = LOLA_DEM_PATH
     else:
         print("LOLA DEM não encontrado. Iniciando download...")
-        app.state.lola_dem_path = await run_in_threadpool(
-            download_lola_dem
-        )
-
+        app.state.lola_dem_path = await run_in_threadpool(download_lola_dem)
     yield
+
 
 app = FastAPI(
     title="NASA Lunar Landing Site Planner API",
     description="Motor de cálculo de efemérides, topografia 360° e visibilidade lunar",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
-
-
-# 2. Libera o CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -54,7 +44,7 @@ app.add_middleware(
 
 NOME_PADRAO = "Ponto Customizado"
 
-# 3. Contratos de Entrada (Pydantic Models)
+
 class SimulacaoRequest(BaseModel):
     nome_local: str = Field(default=NOME_PADRAO)
     nome: str | None = Field(default=None)
@@ -77,10 +67,6 @@ class ComparacaoRequest(BaseModel):
 
 
 def _normalizar_efemerides(dados_brutos: list | dict, passo_horas: int) -> dict:
-    """
-    Adapta a saída list[dict] do ephemeris_engine.py para o dicionário de listas
-    esperado pelo terrain_engine.py e metrics_analyzer.py.
-    """
     if isinstance(dados_brutos, dict):
         dados_brutos.setdefault("passo_horas", passo_horas)
         return dados_brutos
@@ -101,18 +87,121 @@ def _normalizar_efemerides(dados_brutos: list | dict, passo_horas: int) -> dict:
     }
 
 
-# 4. Rota GET: Lista os locais famosos (Shackleton, Apollo 11, etc.)
 @app.get("/api/sites")
 def listar_locais_predefinidos():
     return {"sites": SITES_CATALOG}
 
 
-# 5. Rota POST: Simula 1 único local de pouso (Efemérides + Terreno 360° + KPIs)
+@app.get("/api/fases")
+def obter_fases_lunares(
+    start_date: str = Query(default="2027-03-01"),
+    days: int = Query(default=30, ge=1, le=90),
+    lat: float = Query(default=-89.9),
+    lon: float = Query(default=0.0),
+):
+    """Calcula a fase lunar real e iluminação via skyfield.almanac e DE421."""
+    try:
+        dt0 = datetime.strptime(start_date.strip(), "%Y-%m-%d").replace(tzinfo=UTC)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="start_date deve estar no formato YYYY-MM-DD")
+
+    ctx = get_planetary_context()
+    ts, eph = ctx["ts"], ctx["eph"]
+    t0 = ts.from_datetime(dt0)
+    t1 = ts.from_datetime(dt0 + timedelta(days=days))
+
+    fase_graus = float(almanac.moon_phase(eph, t0).degrees)
+    illum_pct = round(float(almanac.fraction_illuminated(eph, "moon", t0)) * 100.0, 1)
+
+    nomes_fases = [
+        "Lua Nova",
+        "Lua Crescente",
+        "Quarto Crescente",
+        "Gibosa Crescente",
+        "Lua Cheia",
+        "Gibosa Minguante",
+        "Quarto Minguante",
+        "Lua Minguante",
+    ]
+    idx_fase = int(((fase_graus + 22.5) % 360) // 45)
+    fase_nome = f"{nomes_fases[idx_fase]} ({illum_pct}% iluminada)"
+
+    times_fases, estados_fases = almanac.find_discrete(t0, t1, almanac.moon_phases(eph))
+    eventos = [
+        {"timestamp": tf.utc_iso(), "fase_id": int(ef), "fase": ["Lua Nova", "Quarto Crescente", "Lua Cheia", "Quarto Minguante"][int(ef)]}
+        for tf, ef in zip(times_fases, estados_fases)
+    ]
+
+    return {
+        "ciclo_sinodico_dias": 29.53,
+        "fase_graus": round(fase_graus, 2),
+        "iluminacao_pct": illum_pct,
+        "fase_nome": fase_nome,
+        "eventos_fase": eventos,
+    }
+
+
+@app.get("/api/viagem")
+def obter_trajetoria_viagem(
+    start_date: str = Query(default="2027-03-01"),
+    duration_days: int = Query(default=4, ge=1, le=15),
+):
+    """Calcula vetores reais Terra-Lua (DE421) e curva de transferência translunar (TLI)."""
+    try:
+        dt0 = datetime.strptime(start_date.strip(), "%Y-%m-%d").replace(tzinfo=UTC)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="start_date deve estar no formato YYYY-MM-DD")
+
+    ctx = get_planetary_context()
+    ts, earth, moon = ctx["ts"], ctx["earth"], ctx["moon"]
+
+    steps = 48
+    dts = [dt0 + timedelta(hours=(duration_days * 24 * i) / steps) for i in range(steps + 1)]
+    t_arr = ts.from_datetimes(dts)
+
+    # Vetor geocêntrico real da Lua em km no instante de chegada
+    moon_vec_km = (moon - earth).at(t_arr[-1]).position.km
+    dist_km = float(np.linalg.norm(moon_vec_km))
+
+    # Escala para a cena Three.js (Terra em [-3.2, 0, 0] e Lua no destino real rotacionado)
+    escala = 4.2 / 384400.0
+    earth_scene = np.array([-3.2, 0.0, 0.0])
+    moon_offset = np.array([moon_vec_km[0], moon_vec_km[2] * 0.35, moon_vec_km[1]]) * escala
+    moon_scene = earth_scene + moon_offset
+
+    # Curva de transferência orbital suave (arco balístico TLI de 4 dias)
+    trajectory = []
+    perp = np.array([-moon_offset[2], 0.0, moon_offset[0]])
+    perp = perp / (np.linalg.norm(perp) + 1e-9)
+
+    for i in range(steps + 1):
+        u = i / steps
+        base = (1 - u) * earth_scene + u * moon_scene
+        arco = np.sin(u * np.pi) * 1.45 * perp + np.array([0.0, np.sin(u * np.pi) * 0.45, 0.0])
+        pt = base + arco
+        trajectory.append({
+            "step": i,
+            "x": round(float(pt[0]), 3),
+            "y": round(float(pt[1]), 3),
+            "z": round(float(pt[2]), 3),
+        })
+
+    return {
+        "distancia_terra_lua_km": round(dist_km, 1),
+        "earth_pos": {"x": round(float(earth_scene[0]), 3), "y": 0.0, "z": 0.0},
+        "moon_pos": {
+            "x": round(float(moon_scene[0]), 3),
+            "y": round(float(moon_scene[1]), 3),
+            "z": round(float(moon_scene[2]), 3),
+        },
+        "tli_trajectory": trajectory,
+    }
+
+
 @app.post("/api/simulate")
 def simular_local(req: SimulacaoRequest):
     passo_efetivo = 3 if (req.dias_simulacao > 30 and req.passo_horas == 1) else req.passo_horas
     try:
-        # Resolve nome caso o payload envie "nome" em vez de "nome_local"
         nome_informado = (req.nome or "").strip()
         nome_local_limpo = (req.nome_local or "").strip()
         if nome_informado:
@@ -124,7 +213,6 @@ def simular_local(req: SimulacaoRequest):
             site = get_site_by_id(site_id) if site_id else None
             nome_final = site["name"] if site else NOME_PADRAO
 
-        # Resolve data caso o payload envie "data_inicio": "YYYY-MM-DD"
         ano, mes, dia = req.ano, req.mes, req.dia
         if req.data_inicio:
             partes = req.data_inicio.strip().split("-")
@@ -134,20 +222,6 @@ def simular_local(req: SimulacaoRequest):
             if not (1900 <= ano <= 2050):
                 raise ValueError("ano deve estar entre 1900 e 2050 (limite dos kernels SPICE)")
 
-        # Passo A: Efemérides via Skyfield + normalização para vetores
-        lista_efemerides = calcular_visibilidade(
-            lat=req.lat,
-            lon=req.lon,
-            elevacao_m=req.elevacao_m,
-            ano=ano,
-            mes=mes,
-            dia=dia,
-            dias_simulacao=req.dias_simulacao,
-            passo_horas=passo_efetivo
-        )
-        dados_vetorizados = _normalizar_efemerides(lista_efemerides, passo_efetivo)
-
-        # Passo B: Gera horizonte 360° (com relevo real/sintético OU plano 0° se desativado)
         if req.usar_topografia:
             perfil_horizonte = gerar_perfil_horizonte_360(req.lat, req.lon, req.elevacao_m)
         else:
@@ -156,13 +230,31 @@ def simular_local(req: SimulacaoRequest):
                 "site_id_detectado": None,
                 "azimutes_graus": list(range(360)),
                 "elevacao_horizonte_graus": [0.0] * 360,
-                "obstaculos_principais": []
+                "obstaculos_principais": [],
+                "terrain_grid": None,
+                "slope_deg_real": None,
+                "center_elevation_m_real": None,
             }
 
-        # Sempre roda aplicar_obstrucao_terreno para manter todas as 6 chaves de series_temporais no JSON
-        dados_processados = aplicar_obstrucao_terreno(dados_vetorizados, perfil_horizonte)
+        # Usa a altitude real do LOLA DEM se disponível
+        elevacao_efetiva = (
+            perfil_horizonte["center_elevation_m_real"]
+            if perfil_horizonte.get("center_elevation_m_real") is not None
+            else req.elevacao_m
+        )
 
-        # Passo C: Calcula KPIs executivos e engenharia de potência
+        lista_efemerides = calcular_visibilidade(
+            lat=req.lat,
+            lon=req.lon,
+            elevacao_m=elevacao_efetiva,
+            ano=ano,
+            mes=mes,
+            dia=dia,
+            dias_simulacao=req.dias_simulacao,
+            passo_horas=passo_efetivo,
+        )
+        dados_vetorizados = _normalizar_efemerides(lista_efemerides, passo_efetivo)
+        dados_processados = aplicar_obstrucao_terreno(dados_vetorizados, perfil_horizonte)
         metricas = analisar_metricas(dados_processados)
 
         return {
@@ -170,30 +262,30 @@ def simular_local(req: SimulacaoRequest):
             "coordenadas": {
                 "lat": req.lat,
                 "lon": req.lon,
-                "elevacao_m": req.elevacao_m
+                "elevacao_m": elevacao_efetiva,
             },
             "configuracao": {
                 "data_inicio": f"{ano:04d}-{mes:02d}-{dia:02d}",
                 "dias_simulacao": req.dias_simulacao,
                 "passo_horas": passo_efetivo,
-                "topografia_ativa": req.usar_topografia
+                "topografia_ativa": req.usar_topografia,
             },
             "metricas_resumo": metricas,
             "perfil_horizonte_360": perfil_horizonte,
-            "series_temporais": dados_processados
+            "series_temporais": dados_processados,
         }
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=f"Parâmetro inválido: {str(ve)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# 6. Rota POST: Compara cenários lado a lado (suporta cenario_a/cenario_b OU lista cenarios)
+
 @app.post("/api/compare")
 def comparar_cenarios(req: ComparacaoRequest):
     if req.cenarios:
         return {
             "total_cenarios": len(req.cenarios),
-            "resultados": [simular_local(c) for c in req.cenarios]
+            "resultados": [simular_local(c) for c in req.cenarios],
         }
     if req.cenario_a and req.cenario_b:
         res_a = simular_local(req.cenario_a)
@@ -201,14 +293,14 @@ def comparar_cenarios(req: ComparacaoRequest):
         return {
             "cenario_a": res_a,
             "cenario_b": res_b,
-            "resultados": [res_a, res_b]
+            "resultados": [res_a, res_b],
         }
     raise HTTPException(
         status_code=422,
-        detail="Informe 'cenario_a' e 'cenario_b' ou uma lista em 'cenarios'."
+        detail="Informe 'cenario_a' e 'cenario_b' ou uma lista em 'cenarios'.",
     )
 
-# 6b. Adaptador para o frontend (contrato do frontend/js/api.js)
+
 class PousoRequest(BaseModel):
     site_id: str | None = None
     site_name: str | None = None
@@ -226,7 +318,7 @@ def _normalizar_lon(lon: float) -> float:
 def _declividade_conhecida(site_id: str | None) -> float | None:
     if not site_id:
         return None
-    alias = {"im1_nova_c": "im1_malapert_a"}  # ids diferentes entre catálogo e JSON
+    alias = {"im1_nova_c": "im1_malapert_a"}
     alvo = alias.get(site_id, site_id)
     for item in get_sites_catalog():
         if item.get("id") == alvo:
@@ -281,7 +373,12 @@ def simular_pouso(req: PousoRequest):
 
     sun_pct = m["iluminacao_solar_pct"]
     earth_pct = m["visibilidade_terra_pct"]
-    slope = _declividade_conhecida(site_id)
+
+    # Usa slope real calculado do DEM LOLA ou o valor catalogado no JSON
+    slope = perfil.get("slope_deg_real")
+    if slope is None:
+        slope = _declividade_conhecida(site_id)
+
     seguranca = None if slope is None else slope <= 15.0
     iluminacao = sun_pct >= 50.0
     comunicacao = earth_pct >= 50.0
@@ -295,12 +392,13 @@ def simular_pouso(req: PousoRequest):
         "start_date": res["configuracao"]["data_inicio"],
         "days": req.days,
         "step_min": passo_h * 60,
-        "slope_deg": slope,                 # None = sem dado
-        "sunset_duration_min": None,        # ainda não calculado pelo backend
+        "slope_deg": slope,
+        "sunset_duration_min": None,
         "sun_fraction_pct": sun_pct,
         "earth_fraction_pct": earth_pct,
         "max_continuous_night_hours": m["maior_noite_continua_horas"],
         "horizon_profile": horizon_profile,
+        "terrain_grid": perfil.get("terrain_grid"),  # Malha 3D real para o Three.js
         "criterios": {
             "seguranca_topografica": seguranca,
             "iluminacao_solar": iluminacao,
@@ -310,7 +408,7 @@ def simular_pouso(req: PousoRequest):
         "veredito_backend": m["veredito"],
         "assumptions": [
             f"Efemérides lunares e orientação da Lua: NASA/JPL SPICE (DE421), passo de {passo_h} h.",
-            f"Horizonte 360°: {perfil['modo_terreno']}.",
+            f"Horizonte 360° e terreno 3D: {perfil['modo_terreno']}.",
             "Disco solar com semidiâmetro de 0,265°, sem refração atmosférica.",
             "Critério GO: iluminação ≥ 50%, visada da Terra ≥ 50% e declividade ≤ 15° (quando houver dado).",
             m["contexto_educacional"],
@@ -319,7 +417,6 @@ def simular_pouso(req: PousoRequest):
     }
 
 
-# 7. Serve o Frontend (HTML/CSS/JS) na rota raiz "/" com caminho absoluto seguro
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 if FRONTEND_DIR.exists():
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

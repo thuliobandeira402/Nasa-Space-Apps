@@ -58,3 +58,56 @@ def horizonte_lola(lat: float, lon: float, dem_path: str,
     col0_x = t.c + 0.5 * t.a
     row0_y = t.f + 0.5 * t.e
     return horizonte_360_de_dem(z, col0_x, row0_y, pixel_m, x, y, lon, altura_obs_m, raio_m)
+
+
+def extrair_malha_terreno_lola(lat: float, lon: float, dem_path: str, grid_size: int = 64) -> dict:
+    """
+    Extrai uma grade local (grid_size x grid_size) do GeoTIFF LOLA ao redor do pouso
+    para renderização 3D no Three.js e cálculo real da declividade (slope_deg) no centro.
+    """
+    import rasterio
+    from rasterio.windows import from_bounds
+
+    x, y = latlon_para_xy_polar_sul(lat, lon)
+    with rasterio.open(dem_path) as src:
+        pixel_m = float(src.res[0])
+        half_span = (grid_size / 2.0) * pixel_m
+        win = from_bounds(x - half_span, y - half_span, x + half_span, y + half_span, transform=src.transform)
+        win = win.round_offsets().round_lengths()
+        z = src.read(1, window=win, boundless=True, fill_value=np.nan).astype("float64")
+        if src.nodata is not None:
+            z[z == src.nodata] = np.nan
+
+    if np.all(np.isnan(z)):
+        raise ValueError("Janela sem dados válidos no DEM LOLA.")
+
+    media_z = float(np.nanmean(z))
+    z = np.where(np.isnan(z), media_z, z)
+
+    # Reamostra exatamente para (grid_size, grid_size) compatível com PlaneGeometry(segments = grid_size - 1)
+    rows = np.linspace(0, z.shape[0] - 1, grid_size)
+    cols = np.linspace(0, z.shape[1] - 1, grid_size)
+    rr, cc = np.meshgrid(rows, cols, indexing="ij")
+    z_grid = map_coordinates(z, [rr, cc], order=1, mode="nearest")
+
+    # Calcula declividade real (slope em graus) via gradiente na janela central (5x5 pixels)
+    dy, dx = np.gradient(z_grid, pixel_m)
+    slope_matrix = np.degrees(np.arctan(np.hypot(dx, dy)))
+    c = grid_size // 2
+    slope_deg = float(np.round(np.mean(slope_matrix[max(0, c - 2):c + 3, max(0, c - 2):c + 3]), 2))
+
+    min_elev = float(np.min(z_grid))
+    max_elev = float(np.max(z_grid))
+    span = max(1.0, max_elev - min_elev)
+    # Normaliza alturas entre -0.5 e +0.5 para o app.js escalar proporcionalmente ao relevo real
+    heights_norm = ((z_grid - np.mean(z_grid)) / span).ravel()
+
+    return {
+        "size": grid_size,
+        "pixel_m": round(pixel_m, 1),
+        "min_elevation_m": round(min_elev, 1),
+        "max_elevation_m": round(max_elev, 1),
+        "center_elevation_m": round(float(z_grid[c, c]), 1),
+        "slope_deg": slope_deg,
+        "heights": np.round(heights_norm, 4).tolist(),
+    }
