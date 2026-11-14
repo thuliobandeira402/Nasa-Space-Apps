@@ -84,54 +84,6 @@ def listar_locais_predefinidos():
 def simular_local(req: SimulacaoRequest):
     passo_efetivo = 3 if (req.dias_simulacao > 30 and req.passo_horas == 1) else req.passo_horas
     try:
-        # Passo A: Efemérides via Skyfield + normalização para vetores
-        lista_efemerides = calcular_visibilidade(
-            lat=req.lat,
-            lon=req.lon,
-            elevacao_m=req.elevacao_m,
-            ano=req.ano,
-            mes=req.mes,
-            dia=req.dia,
-            dias_simulacao=req.dias_simulacao,
-            passo_horas=passo_efetivo
-        )
-        dados_vetorizados = _normalizar_efemerides(lista_efemerides, passo_efetivo)
-
-        # Passo B: Gera horizonte topográfico 360° e aplica obstrução das crateras/montanhas
-        perfil_horizonte = gerar_perfil_horizonte_360(req.lat, req.lon, req.elevacao_m)
-        if req.usar_topografia:
-            dados_processados = aplicar_obstrucao_terreno(dados_vetorizados, perfil_horizonte)
-        else:
-            dados_processados = dados_vetorizados
-
-        # Passo C: Calcula KPIs executivos e engenharia de potência
-        metricas = analisar_metricas(dados_processados)
-
-        return {
-            "local": req.nome_local,
-            "coordenadas": {
-                "lat": req.lat,
-                "lon": req.lon,
-                "elevacao_m": req.elevacao_m
-            },
-            "configuracao": {
-                "data_inicio": f"{req.ano:04d}-{req.mes:02d}-{req.dia:02d}",
-                "dias_simulacao": req.dias_simulacao,
-                "passo_horas": passo_efetivo,
-                "topografia_ativa": req.usar_topografia
-            },
-            "metricas_resumo": metricas,
-            "perfil_horizonte_360": perfil_horizonte,
-            "series_temporais": dados_processados
-        }
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=f"Parâmetro inválido: {str(ve)}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-@app.post("/api/simulate")
-def simular_local(req: SimulacaoRequest):
-    passo_efetivo = 3 if (req.dias_simulacao > 30 and req.passo_horas == 1) else req.passo_horas
-    try:
         # Resolve nome caso o payload envie "nome" em vez de "nome_local"
         nome_final = req.nome.strip() if (req.nome and req.nome.strip()) else req.nome_local
 
