@@ -1,4 +1,5 @@
 # backend/main.py
+from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,10 +31,10 @@ class SimulacaoRequest(BaseModel):
     nome_local: str = Field(default="Ponto Customizado")
     lat: float = Field(..., ge=-90.0, le=90.0)
     lon: float = Field(..., ge=-180.0, le=180.0)
-    elevacao_m: float = Field(default=0.0)
-    ano: int = Field(default=2026)
-    mes: int = Field(default=11)
-    dia: int = Field(default=15)
+    elevacao_m: float = Field(default=0.0, ge=-10000.0, le=15000.0)
+    ano: int = Field(default=2026, ge=1900, le=2050)
+    mes: int = Field(default=11, ge=1, le=12)
+    dia: int = Field(default=15, ge=1, le=31)
     dias_simulacao: int = Field(default=30, ge=1, le=90)
     passo_horas: int = Field(default=1, ge=1, le=24)
     usar_topografia: bool = Field(default=True)
@@ -57,7 +58,6 @@ def _normalizar_efemerides(dados_brutos: list | dict, passo_horas: int) -> dict:
     if not dados_brutos:
         raise ValueError("calcular_visibilidade retornou uma lista vazia.")
 
-    n = len(dados_brutos)
     return {
         "passo_horas": passo_horas,
         "timestamps": [item["timestamp"] for item in dados_brutos],
@@ -67,7 +67,6 @@ def _normalizar_efemerides(dados_brutos: list | dict, passo_horas: int) -> dict:
         "terra_elevacao_graus": [item["earth_elevation_deg"] for item in dados_brutos],
         "terra_azimute_graus": [item["earth_azimuth_deg"] for item in dados_brutos],
         "fases_lua_iluminada_pct": [item.get("moon_illumination_pct", 50.0) for item in dados_brutos],
-        # Caso o ephemeris_engine não retorne a distância em km, usa a distância média Terra-Lua (384.400 km)
         "distancia_terra_km": [item.get("earth_distance_km", 384400.0) for item in dados_brutos],
     }
 
@@ -123,6 +122,8 @@ def simular_local(req: SimulacaoRequest):
             "perfil_horizonte_360": perfil_horizonte,
             "series_temporais": dados_processados
         }
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=f"Parâmetro inválido: {str(ve)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -149,5 +150,7 @@ def comparar_cenarios(req: ComparacaoRequest):
     )
 
 
-# 7. Serve o Frontend (HTML/CSS/JS) na rota raiz "/"
-app.mount("/", StaticFiles(directory="../frontend", html=True), name="frontend")
+# 7. Serve o Frontend (HTML/CSS/JS) na rota raiz "/" com caminho absoluto seguro
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+if FRONTEND_DIR.exists():
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
