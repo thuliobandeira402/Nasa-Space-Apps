@@ -2,7 +2,10 @@
 import numpy as np
 from data_loader import get_horizon_profiles
 from sites_catalog import SITES_CATALOG
+from data_loader import get_horizon_profiles, LOLA_DIR
+from lola_horizon import horizonte_lola
 
+ARQUIVO_DEM = LOLA_DIR / "LDEM_80S_40MPP_ADJ.TIFF"   
 
 import math
 
@@ -32,6 +35,18 @@ def gerar_perfil_horizonte_360(lat: float, lon: float, elevacao_m: float = 0.0) 
     azimutes = np.arange(0, 360, 1)
     profiles = get_horizon_profiles()
     site_id = identificar_site_conhecido(lat, lon)
+    if lat <= -80.0 and ARQUIVO_DEM.exists():
+        try:
+            horizonte_real = horizonte_lola(lat, lon, str(ARQUIVO_DEM))
+            return {
+                "modo_terreno": "NASA LOLA LDEM (dados reais, 40 m/px)",
+                "site_id_detectado": site_id,
+                "azimutes_graus": azimutes.tolist(),
+                "elevacao_horizonte_graus": horizonte_real,
+                "obstaculos_principais": []
+            }
+        except Exception as e:
+            print(f"[LOLA] falhou ({e}); usando modelo de horizonte aproximado")
 
     # Caso 1: Local conhecido com perfil topográfico mapeado no JSON
     if site_id and site_id in profiles:
