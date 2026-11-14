@@ -9,13 +9,40 @@ from sites_catalog import SITES_CATALOG, get_site_by_id
 from ephemeris_engine import calcular_visibilidade
 from terrain_engine import gerar_perfil_horizonte_360, aplicar_obstrucao_terreno, identificar_site_conhecido
 from metrics_analyzer import analisar_metricas
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from starlette.concurrency import run_in_threadpool
 
-# 1. Inicializa a aplicação FastAPI
+from data_loader import download_lola_dem
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    dem_path = (
+        Path(__file__).resolve().parent.parent
+        / "data"
+        / "lola_dem"
+        / "LDEM_80S_40MPP_ADJ.TIFF"
+    )
+
+    if dem_path.exists():
+        print("LOLA DEM já está instalado. Ignorando download.")
+        app.state.lola_dem_path = dem_path
+    else:
+        print("LOLA DEM não encontrado. Iniciando download...")
+        app.state.lola_dem_path = await run_in_threadpool(
+            download_lola_dem
+        )
+
+    yield
+
 app = FastAPI(
     title="NASA Lunar Landing Site Planner API",
     description="Motor de cálculo de efemérides, topografia 360° e visibilidade lunar",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
+
+
 
 # 2. Libera o CORS
 app.add_middleware(

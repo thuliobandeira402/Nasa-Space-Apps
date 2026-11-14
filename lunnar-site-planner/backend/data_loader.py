@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 from functools import lru_cache
+from urllib.request import Request, urlopen
 from skyfield.api import Loader, PlanetaryConstants
 
 # Resolve os caminhos de forma absoluta (funciona em Windows e Linux)
@@ -13,6 +14,70 @@ LOLA_DIR = DATA_DIR / "lola_dem"
 # Garante que as pastas existam
 KERNELS_DIR.mkdir(parents=True, exist_ok=True)
 LOLA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+
+LOLA_DEM_URL = (
+    "https://pgda.gsfc.nasa.gov/data/LOLA_20mpp/"
+    "LDEM_80S_40MPP_ADJ.TIF"
+)
+LOLA_DEM_PATH = LOLA_DIR / "LDEM_80S_40MPP_ADJ.TIF"
+
+
+def download_lola_dem(
+    url: str = LOLA_DEM_URL,
+    destination: Path = LOLA_DEM_PATH,
+    chunk_size: int = 1024 * 1024,
+    timeout: int = 60,
+) -> Path:
+    """Baixa o LOLA DEM em blocos, se ele ainda não existir localmente.
+
+    Retorna o caminho do GeoTIFF. O arquivo temporário só é renomeado
+    após o download terminar e a assinatura TIFF ser validada.
+    """
+    destination = Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    def is_valid_tiff(file_path: Path) -> bool:
+        if not file_path.is_file() or file_path.stat().st_size < 8:
+            return False
+        with file_path.open("rb") as file:
+            header = file.read(4)
+        return header in (b"II*\x00", b"MM\x00*")
+
+    if is_valid_tiff(destination):
+        return destination
+
+    temporary_path = destination.with_name(destination.name + ".part")
+    request = Request(url, headers={"User-Agent": "LunarLandingResearchProject/1.0"})
+
+    try:
+        print(f"Baixando LOLA DEM da NASA: {url}")
+        with urlopen(request, timeout=timeout) as response:
+            status = getattr(response, "status", 200)
+            if status != 200:
+                raise RuntimeError(f"Falha no download do LOLA DEM: HTTP {status}")
+
+            with temporary_path.open("wb") as output:
+                while True:
+                    chunk = response.read(chunk_size)
+                    if not chunk:
+                        break
+                    output.write(chunk)
+
+        if not is_valid_tiff(temporary_path):
+            raise RuntimeError(
+                "O download terminou, mas o arquivo recebido não parece ser um TIFF válido."
+            )
+
+        temporary_path.replace(destination)
+        size_mb = destination.stat().st_size / (1024 ** 2)
+        print(f"LOLA DEM salvo em {destination} ({size_mb:.1f} MB).")
+        return destination
+
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        raise
 
 # Loader do Skyfield apontando exclusivamente para data/kernels/
 skyfield_load = Loader(str(KERNELS_DIR))
