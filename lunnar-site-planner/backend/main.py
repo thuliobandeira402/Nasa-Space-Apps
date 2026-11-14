@@ -46,6 +46,7 @@ def listar_locais_predefinidos():
 # 5. Rota POST: Simula 1 único local de pouso
 @app.post("/api/simulate")
 def simular_local(req: SimulacaoRequest):
+    passo_efetivo = 3 if (req.dias_simulacao > 30 and req.passo_horas == 1) else req.passo_horas
     try:
         # Passo A: Chama o Skyfield para pegar os ângulos do Sol e da Terra
         dados_brutos = calcular_visibilidade(
@@ -55,7 +56,8 @@ def simular_local(req: SimulacaoRequest):
             ano=req.ano,
             mes=req.mes,
             dia=req.dia,
-            dias_simulacao=req.dias_simulacao
+            dias_simulacao=req.dias_simulacao,
+            passo_horas=passo_efetivo
         )
         
         # Passo B: Calcula KPIs (tempo até o pôr do sol, % de luz, viabilidade)
