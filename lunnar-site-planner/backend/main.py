@@ -1,21 +1,22 @@
+# backend/main.py
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-# Importando os seus próprios módulos (que ficarão na mesma pasta backend/)
 from sites_catalog import SITES_CATALOG
 from ephemeris_engine import calcular_visibilidade
+from terrain_engine import gerar_perfil_horizonte_360, aplicar_obstrucao_terreno
 from metrics_analyzer import analisar_metricas
 
 # 1. Inicializa a aplicação FastAPI
 app = FastAPI(
     title="NASA Lunar Landing Site Planner API",
-    description="Motor de cálculo de efemérides e visibilidade lunar",
+    description="Motor de cálculo de efemérides, topografia 360° e visibilidade lunar",
     version="1.0.0"
 )
 
-# 2. Libera o CORS (Evita erro de bloqueio no navegador durante testes)
+# 2. Libera o CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,33 +24,67 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # 3. Contratos de Entrada (Pydantic Models)
 class SimulacaoRequest(BaseModel):
     nome_local: str = Field(default="Ponto Customizado")
-    lat: float = Field(..., ge=-90.0, le=90.0, description="Latitude lunar (-90 a 90)")
-    lon: float = Field(..., ge=-180.0, le=180.0, description="Longitude lunar (-180 a 180)")
-    elevacao_m: float = Field(default=0.0, description="Altitude do terreno em metros")
+    lat: float = Field(..., ge=-90.0, le=90.0)
+    lon: float = Field(..., ge=-180.0, le=180.0)
+    elevacao_m: float = Field(default=0.0)
     ano: int = Field(default=2026)
     mes: int = Field(default=11)
     dia: int = Field(default=15)
     dias_simulacao: int = Field(default=30, ge=1, le=90)
+    passo_horas: int = Field(default=1, ge=1, le=24)
+    usar_topografia: bool = Field(default=True)
+
 
 class ComparacaoRequest(BaseModel):
-    cenario_a: SimulacaoRequest
-    cenario_b: SimulacaoRequest
+    cenario_a: SimulacaoRequest | None = None
+    cenario_b: SimulacaoRequest | None = None
+    cenarios: list[SimulacaoRequest] | None = None
+
+
+def _normalizar_efemerides(dados_brutos: list | dict, passo_horas: int) -> dict:
+    """
+    Adapta a saída list[dict] do ephemeris_engine.py para o dicionário de listas
+    esperado pelo terrain_engine.py e metrics_analyzer.py.
+    """
+    if isinstance(dados_brutos, dict):
+        dados_brutos.setdefault("passo_horas", passo_horas)
+        return dados_brutos
+
+    if not dados_brutos:
+        raise ValueError("calcular_visibilidade retornou uma lista vazia.")
+
+    n = len(dados_brutos)
+    return {
+        "passo_horas": passo_horas,
+        "timestamps": [item["timestamp"] for item in dados_brutos],
+        "hora_indice": [item.get("hora_indice", i * passo_horas) for i, item in enumerate(dados_brutos)],
+        "sol_elevacao_graus": [item["sun_elevation_deg"] for item in dados_brutos],
+        "sol_azimute_graus": [item["sun_azimuth_deg"] for item in dados_brutos],
+        "terra_elevacao_graus": [item["earth_elevation_deg"] for item in dados_brutos],
+        "terra_azimute_graus": [item["earth_azimuth_deg"] for item in dados_brutos],
+        "fases_lua_iluminada_pct": [item.get("moon_illumination_pct", 50.0) for item in dados_brutos],
+        # Caso o ephemeris_engine não retorne a distância em km, usa a distância média Terra-Lua (384.400 km)
+        "distancia_terra_km": [item.get("earth_distance_km", 384400.0) for item in dados_brutos],
+    }
+
 
 # 4. Rota GET: Lista os locais famosos (Shackleton, Apollo 11, etc.)
 @app.get("/api/sites")
 def listar_locais_predefinidos():
     return {"sites": SITES_CATALOG}
 
-# 5. Rota POST: Simula 1 único local de pouso
+
+# 5. Rota POST: Simula 1 único local de pouso (Efemérides + Terreno 360° + KPIs)
 @app.post("/api/simulate")
 def simular_local(req: SimulacaoRequest):
     passo_efetivo = 3 if (req.dias_simulacao > 30 and req.passo_horas == 1) else req.passo_horas
     try:
-        # Passo A: Chama o Skyfield para pegar os ângulos do Sol e da Terra
-        dados_brutos = calcular_visibilidade(
+        # Passo A: Efemérides via Skyfield + normalização para vetores
+        lista_efemerides = calcular_visibilidade(
             lat=req.lat,
             lon=req.lon,
             elevacao_m=req.elevacao_m,
@@ -59,30 +94,60 @@ def simular_local(req: SimulacaoRequest):
             dias_simulacao=req.dias_simulacao,
             passo_horas=passo_efetivo
         )
-        
-        # Passo B: Calcula KPIs (tempo até o pôr do sol, % de luz, viabilidade)
-        metricas = analisar_metricas(dados_brutos)
-        
-        # Passo C: Retorna um dicionário Python (o FastAPI converte para JSON sozinho)
+        dados_vetorizados = _normalizar_efemerides(lista_efemerides, passo_efetivo)
+
+        # Passo B: Gera horizonte topográfico 360° e aplica obstrução das crateras/montanhas
+        perfil_horizonte = gerar_perfil_horizonte_360(req.lat, req.lon, req.elevacao_m)
+        if req.usar_topografia:
+            dados_processados = aplicar_obstrucao_terreno(dados_vetorizados, perfil_horizonte)
+        else:
+            dados_processados = dados_vetorizados
+
+        # Passo C: Calcula KPIs executivos e engenharia de potência
+        metricas = analisar_metricas(dados_processados)
+
         return {
             "local": req.nome_local,
-            "coordenadas": {"lat": req.lat, "lon": req.lon, "elevacao_m": req.elevacao_m},
+            "coordenadas": {
+                "lat": req.lat,
+                "lon": req.lon,
+                "elevacao_m": req.elevacao_m
+            },
+            "configuracao": {
+                "data_inicio": f"{req.ano:04d}-{req.mes:02d}-{req.dia:02d}",
+                "dias_simulacao": req.dias_simulacao,
+                "passo_horas": passo_efetivo,
+                "topografia_ativa": req.usar_topografia
+            },
             "metricas_resumo": metricas,
-            "series_temporais": dados_brutos
+            "perfil_horizonte_360": perfil_horizonte,
+            "series_temporais": dados_processados
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# 6. Rota POST: Compara 2 cenários lado a lado (Locais diferentes ou Datas diferentes)
+
+# 6. Rota POST: Compara cenários lado a lado (suporta cenario_a/cenario_b OU lista cenarios)
 @app.post("/api/compare")
 def comparar_cenarios(req: ComparacaoRequest):
-    resultado_a = simular_local(req.cenario_a)
-    resultado_b = simular_local(req.cenario_b)
-    return {
-        "cenario_a": resultado_a,
-        "cenario_b": resultado_b
-    }
+    if req.cenarios:
+        return {
+            "total_cenarios": len(req.cenarios),
+            "resultados": [simular_local(c) for c in req.cenarios]
+        }
+    if req.cenario_a and req.cenario_b:
+        res_a = simular_local(req.cenario_a)
+        res_b = simular_local(req.cenario_b)
+        return {
+            "cenario_a": res_a,
+            "cenario_b": res_b,
+            "resultados": [res_a, res_b]
+        }
+    raise HTTPException(
+        status_code=422,
+        detail="Informe 'cenario_a' e 'cenario_b' ou uma lista em 'cenarios'."
+    )
+
 
 # 7. Serve o Frontend (HTML/CSS/JS) na rota raiz "/"
-# IMPORTANTE: Esta linha deve ficar SEMPRE no final do arquivo!
 app.mount("/", StaticFiles(directory="../frontend", html=True), name="frontend")

@@ -54,8 +54,7 @@ def calcular_visibilidade(
     sun_alt, sun_az, _ = sun_app.altaz()
 
     earth_app = observer.at(t_array).observe(earth).apparent()
-    earth_alt, earth_az, _ = earth_app.altaz()
-
+    earth_alt, earth_az, earth_dist = earth_app.altaz()
     moon_illumination = almanac.fraction_illuminated(eph, "moon", t_array)
 
     series_temporais = []
@@ -64,6 +63,7 @@ def calcular_visibilidade(
         s_az = round(float(sun_az.degrees[i]), 3)
         e_el = round(float(earth_alt.degrees[i]), 3)
         e_az = round(float(earth_az.degrees[i]), 3)
+        e_dist_km = round(float(earth_dist.km[i]), 1)
         illum_pct = round(float(moon_illumination[i]) * 100.0, 1)
 
         # Sol visível se o disco superior estiver acima do horizonte (0° - 0.265°)
@@ -80,6 +80,7 @@ def calcular_visibilidade(
             "earth_elevation_deg": e_el,
             "earth_azimuth_deg": e_az,
             "earth_visible": terra_visivel,
+            "earth_distance_km": e_dist_km,
             "moon_illumination_pct": illum_pct,
         })
 
