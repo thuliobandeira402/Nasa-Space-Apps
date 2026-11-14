@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lunar Site Planner · NASA Space Apps</title>
+  <meta name="description" content="Compare locais e datas de pouso no polo sul lunar: Sol, Terra, energia e comunicação.">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" defer></script>
+  <script type="module" src="js/main.js"></script>
+</head>
+<body data-mode="engineer">
+  <a class="skip" href="#resultados">Ir para os resultados</a>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">☾</span>
+      <div>
+        <h1>Lunar Site Planner</h1>
+        <p class="tagline">Sol, Terra e viabilidade de pouso no polo sul da Lua</p>
+      </div>
+    </div>
+
+    <fieldset class="mode-switch" aria-label="Perfil de uso">
+      <legend class="sr-only">Perfil de uso</legend>
+      <input type="radio" name="mode" id="mode-engineer" value="engineer" checked>
+      <label for="mode-engineer">🛠️ Modo Engenheiro</label>
+      <input type="radio" name="mode" id="mode-explorer" value="explorer">
+      <label for="mode-explorer">🚀 Modo Explorador</label>
+    </fieldset>
+  </header>
+
+  <main class="layout">
+    <!-- Painel de controle -->
+    <aside class="panel controls" aria-labelledby="h-controles">
+      <h2 id="h-controles">Cenário</h2>
+      <form id="scenario-form" autocomplete="off">
+        <label for="site">Local de pouso</label>
+        <select id="site" name="site"></select>
+
+        <div class="row only-engineer">
+          <div>
+            <label for="lat">Latitude (°)</label>
+            <input id="lat" name="lat" type="number" step="0.001" min="-90" max="90" value="-89.9">
+          </div>
+          <div>
+            <label for="lon">Longitude (°)</label>
+            <input id="lon" name="lon" type="number" step="0.001" min="-180" max="180" value="0">
+          </div>
+        </div>
+
+        <label for="start">Data de início (UTC)</label>
+        <input id="start" name="start" type="date" value="2027-03-01">
+
+        <div class="row">
+          <div>
+            <label for="days">Duração (dias)</label>
+            <input id="days" name="days" type="number" min="1" max="90" value="30">
+          </div>
+          <div class="only-engineer">
+            <label for="step">Passo (min)</label>
+            <input id="step" name="step" type="number" min="5" max="360" step="5" value="60">
+          </div>
+        </div>
+
+        <div class="actions">
+          <button type="submit" class="btn primary">Simular</button>
+          <button type="button" id="btn-add" class="btn">+ Adicionar à comparação</button>
+        </div>
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+      </form>
+    </aside>
+
+    <!-- Resultados -->
+    <section id="resultados" class="results" aria-labelledby="h-resultados">
+      <h2 id="h-resultados" class="sr-only">Resultados da simulação</h2>
+
+      <div class="cards" id="cards">
+        <article class="card verdict" id="card-verdict" data-state="idle">
+          <h3>Viabilidade</h3>
+          <p class="big" id="verdict-text">—</p>
+          <ul class="checks only-engineer" id="verdict-checks"></ul>
+        </article>
+        <article class="card">
+          <h3>☀️ Luz solar</h3>
+          <p class="big" id="m-sun-frac">—</p>
+          <p class="hint" id="m-sun-next">—</p>
+        </article>
+        <article class="card">
+          <h3>🌍 Terra visível</h3>
+          <p class="big" id="m-earth-frac">—</p>
+          <p class="hint" id="m-earth-next">—</p>
+        </article>
+        <article class="card only-engineer">
+          <h3>Maior noite contínua</h3>
+          <p class="big" id="m-dark">—</p>
+          <p class="hint">Sem Sol acima do horizonte</p>
+        </article>
+      </div>
+
+      <p class="explainer only-explorer" id="explainer">
+        Escolha um local e uma data e clique em <strong>Simular</strong>.
+      </p>
+
+      <div class="charts">
+        <section class="panel chart-panel" aria-labelledby="h-elev">
+          <h3 id="h-elev">Elevação do Sol e da Terra ao longo do tempo</h3>
+          <p class="hint only-explorer">Quando a linha está acima de zero, o astro aparece no céu.</p>
+          <div id="chart-elevation" class="chart" role="img" aria-label="Gráfico de elevação ao longo do tempo"></div>
+        </section>
+
+        <section class="panel chart-panel" aria-labelledby="h-sky">
+          <h3 id="h-sky">Vista do horizonte (azimute × elevação)</h3>
+          <p class="hint only-explorer">É o céu visto do local de pouso. O Sol rasante é típico do polo sul.</p>
+          <div id="chart-sky" class="chart" role="img" aria-label="Trajetória do Sol e da Terra no céu local"></div>
+        </section>
+      </div>
+
+      <section class="panel comparator" aria-labelledby="h-comp">
+        <div class="comp-head">
+          <h3 id="h-comp">Comparador de cenários</h3>
+          <button type="button" id="btn-clear" class="btn small">Limpar</button>
+        </div>
+        <p class="hint" id="comp-empty">Adicione 2 ou mais cenários (outro local ou outra data) para comparar.</p>
+        <div class="table-wrap">
+          <table id="comp-table" hidden>
+            <thead>
+              <tr>
+                <th scope="col">Cenário</th>
+                <th scope="col">Decisão</th>
+                <th scope="col">☀️ Sol</th>
+                <th scope="col">🌍 Terra</th>
+                <th scope="col" class="only-engineer">Maior noite</th>
+                <th scope="col"><span class="sr-only">Remover</span></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div id="chart-compare" class="chart short" role="img" aria-label="Comparação de iluminação e visibilidade da Terra" hidden></div>
+      </section>
+
+      <section class="panel only-engineer" aria-labelledby="h-assump">
+        <h3 id="h-assump">Premissas do cálculo</h3>
+        <ul id="assumptions" class="plain"></ul>
+      </section>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>Dados: NASA/JPL (DE421, orientação lunar), LRO/LOLA (em integração). Projeto feito para o NASA Space Apps Challenge 2026.</p>
+  </footer>
+</body>
+</html>
