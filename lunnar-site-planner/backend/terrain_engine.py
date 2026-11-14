@@ -76,9 +76,9 @@ def gerar_perfil_horizonte_360(lat: float, lon: float, elevacao_m: float = 0.0) 
                 "azimutes_graus": azimutes.tolist(),
                 "elevacao_horizonte_graus": horizonte_real,
                 "obstaculos_principais": [],
-                "terrain_grid": malha_fallback,
-                "slope_deg_real": None,
-                "center_elevation_m_real": elevacao_m,
+                "terrain_grid": malha,
+                "slope_deg_real": malha["slope_deg"],
+                "center_elevation_m_real": malha["center_elevation_m"],
             }
         except Exception as e:
             print(f"[LOLA] Falha ao ler DEM ({e}); utilizando perfil catalogado/sintético.")
@@ -107,7 +107,7 @@ def gerar_perfil_horizonte_360(lat: float, lon: float, elevacao_m: float = 0.0) 
             "elevacao_horizonte_graus": np.round(horizonte, 2).tolist(),
             "obstaculos_principais": obstaculos_info,
             "terrain_grid": malha_fallback,
-            "slope_deg_real": malha_fallback["slope_deg"],
+            "slope_deg_real": None,
             "center_elevation_m_real": elevacao_m,
         }
 
@@ -147,7 +147,7 @@ def gerar_perfil_horizonte_360(lat: float, lon: float, elevacao_m: float = 0.0) 
         "elevacao_horizonte_graus": np.round(horizonte, 2).tolist(),
         "obstaculos_principais": obstaculos_info,
         "terrain_grid": malha_fallback,
-        "slope_deg_real": malha_fallback["slope_deg"],
+        "slope_deg_real": None,
         "center_elevation_m_real": elevacao_m,
     }
 
