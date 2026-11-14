@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from skyfield import almanac
 
-from data_loader import get_sites_catalog, download_lola_dem, get_planetary_context, LOLA_DEM_PATH
+from data_loader import get_sites_catalog, get_planetary_context, LOLA_DEM_PATH
 from sites_catalog import SITES_CATALOG, get_site_by_id
 from ephemeris_engine import calcular_visibilidade
 from terrain_engine import gerar_perfil_horizonte_360, aplicar_obstrucao_terreno, identificar_site_conhecido
