@@ -3,20 +3,24 @@ from datetime import UTC, datetime, timedelta
 
 from data_loader import get_planetary_context  # type: ignore[import-not-found]
 from skyfield import almanac
-from skyfield.toposlib import Geoid
 
-# Raio médio da Lua em metros (referência IAU / LOLA) e raio angular do Sol
-MOON_MEAN_RADIUS_M = 1_737_400.0
+# Raio angular médio do Sol visto da Lua (em graus)
 SOLAR_SEMIDIAMETER_DEG = 0.265
-MOON_GEOID = Geoid("MOON", radius_m=MOON_MEAN_RADIUS_M, inverse_flattening=1e16)
 
 
-def _build_lunar_observer(moon, moon_frame, lat: float, lon: float, elevacao_m: float):
-    """Cria o ponto topográfico na superfície da Lua usando o frame MOON_ME_DE421."""
-    surface_point = MOON_GEOID.latlon(lat, lon, elevation_m=elevacao_m)
-    surface_point.frame = moon_frame
-    surface_point.center = 301
+def _build_lunar_observer(pc, moon, moon_frame, lat: float, lon: float, elevacao_m: float):
+    """
+    Cria o ponto topográfico na superfície da Lua devidamente vinculado à
+    rotação e inclinação axial real (MOON_ME_DE421) via PlanetaryConstants.
+    """
+    surface_point = pc.build_latlon_degrees(
+        moon_frame,
+        lat,
+        lon,
+        elevation_m=elevacao_m,
+    )
     return moon + surface_point
+
 
 def calcular_visibilidade(
     lat: float,
@@ -38,9 +42,10 @@ def calcular_visibilidade(
     moon = ctx["moon"]
     earth = ctx["earth"]
     sun = ctx["sun"]
+    pc = ctx["pc"]
     moon_frame = ctx["moon_frame"]
 
-    observer = _build_lunar_observer(moon, moon_frame, lat, lon, elevacao_m)
+    observer = _build_lunar_observer(pc, moon, moon_frame, lat, lon, elevacao_m)
 
     start_dt = datetime(ano, mes, dia, 0, 0, 0, tzinfo=UTC)
     total_hours = dias_simulacao * 24
