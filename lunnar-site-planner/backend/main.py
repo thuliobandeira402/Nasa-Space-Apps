@@ -3,6 +3,7 @@ import struct
 import zlib
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -14,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from rasterio.enums import Resampling
 from skyfield import almanac
-from functools import lru_cache
+
 from data_loader import LOLA_DEM_PATH, get_planetary_context
 from ephemeris_engine import calcular_visibilidade
 from metrics_analyzer import analisar_metricas
@@ -433,14 +434,19 @@ def simular_pouso(req: PousoRequest):
     sun_pct = m["iluminacao_solar_pct"]
     earth_pct = m["visibilidade_terra_pct"]
     max_sun_h = m["maior_janela_continua_sol_horas"]
+    max_earth_h = m.get("maior_janela_continua_terra_horas", 0)
 
     slope = perfil.get("slope_deg_real")
     if slope is None and site:
         slope = site.get("slope_deg")
 
+    # Critérios Científicos NASA (HLS / VIPER / CLPS):
+    # 1. Declividade na zona de pouso <= 15.0°
+    # 2. Iluminação solar >= 50% da janela OU janela contínua >= 156h (6.5 dias) com >= 40% total
+    # 3. Visibilidade Direct-to-Earth (DTE) >= 50% OU janela contínua >= 72h (3 dias) com >= 40% total
     seguranca = None if slope is None else (slope <= 15.0)
     iluminacao = (sun_pct >= 50.0) or (max_sun_h >= 156 and sun_pct >= 40.0)
-    comunicacao = earth_pct >= 50.0
+    comunicacao = (earth_pct >= 50.0) or (max_earth_h >= 72 and earth_pct >= 40.0)
 
     if seguranca is None:
         go_nogo = "INCONCLUSIVE"
@@ -453,7 +459,7 @@ def simular_pouso(req: PousoRequest):
         if not seguranca:
             veredito_final = f"EXCEEDS SLOPE LIMIT ({slope}° > 15°)"
         elif not comunicacao and iluminacao:
-            veredito_final = "REQUIRES ORBITAL RELAY (DTE < 50%)"
+            veredito_final = "REQUIRES ORBITAL RELAY (DTE < 40%)"
         elif not iluminacao:
             veredito_final = "CRITICAL SHADOW / LOW SOLAR WINDOW"
         else:
@@ -475,6 +481,7 @@ def simular_pouso(req: PousoRequest):
         "sun_fraction_pct": sun_pct,
         "earth_fraction_pct": earth_pct,
         "max_continuous_sun_hours": max_sun_h,
+        "max_continuous_earth_hours": max_earth_h,
         "max_continuous_night_hours": m["maior_noite_continua_horas"],
         "horizon_profile": horizon_profile,
         "terrain_grid": perfil.get("terrain_grid"),
@@ -489,7 +496,7 @@ def simular_pouso(req: PousoRequest):
             f"Lunar Ephemerides & Orientation: NASA/JPL SPICE (DE421, MOON_ME_DE421), {passo_h}h integration step.",
             f"360° Horizon (100 km raycast with lunar curvature correction) & 3D Local Terrain (36 × 36 km, 5×5 median baseline slope): {perfil['modo_terreno']}.",
             "Apparent Solar Disc: 0.265° semidiameter without atmospheric refraction (illuminated disc fraction weighted for solar power); Direct-to-Earth (DTE) evaluated via geometric line-of-sight (0° terrain clearance; 2° RF multipath margin noted for link budget).",
-            "NASA GO Criteria (Artemis/CLPS): Touchdown slope ≤ 15°, Earth DTE link ≥ 50%, and Solar availability ≥ 50% (or ≥ 156h continuous sunlit sortie window with ≥ 40% monthly illumination).",
+            "NASA GO Criteria (Artemis/CLPS): Touchdown slope ≤ 15°, Earth DTE link ≥ 50% (or ≥ 72h continuous DTE window with ≥ 40% polar libration visibility), and Solar availability ≥ 50% (or ≥ 156h continuous sunlit sortie window with ≥ 40% monthly illumination).",
             m["contexto_educacional"],
         ],
         "timeline": timeline,
@@ -497,6 +504,7 @@ def simular_pouso(req: PousoRequest):
         "evento_terra": m["evento_terra"],
         "metricas_resumo": m,
     }
+
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 if FRONTEND_DIR.exists():

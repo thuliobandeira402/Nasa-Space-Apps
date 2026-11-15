@@ -88,6 +88,7 @@ def _calcular_maior_janela_continua(vetor_visivel: np.ndarray, passo_horas: int)
     limite_janela_h = max(passo_horas, (len(vetor_visivel) - 1) * passo_horas)
     return int(min(np.max(duracoes), limite_janela_h))
 
+
 def analisar_metricas(dados: dict) -> dict:
     """
     Transforma as séries temporais (efemérides + obstrução real LOLA)
@@ -126,19 +127,26 @@ def analisar_metricas(dados: dict) -> dict:
 
     maior_janela_sol_h = _calcular_maior_janela_continua(sol_visivel, passo_horas)
     maior_janela_noite_h = _calcular_maior_janela_continua(~sol_visivel, passo_horas)
+    maior_janela_terra_h = _calcular_maior_janela_continua(terra_visivel, passo_horas)
     duracao_crepusculo_min = _calcular_duracao_crepusculo_min(alt_sun, horizonte_sol, passo_horas)
 
     elevacao_max_sol = float(np.max(alt_sun))
     elevacao_min_sol = float(np.min(alt_sun))
 
-    if pct_luz_real >= 70.0 and pct_comunicacao_real >= 50.0:
-        veredito = "VIABLE (OPTIMAL)"
-    elif pct_luz_real >= 35.0 and pct_comunicacao_real >= 20.0:
-        veredito = "CONDITIONAL / CRITICAL"
-    elif pct_luz_real >= 35.0 and pct_comunicacao_real < 20.0:
+    # Critérios Científicos NASA (Artemis III / VIPER / CLPS):
+    # - Energia Solar: >= 50% da janela OU janela contínua >= 156h (6.5 dias) com >= 40% total
+    # - Comunicação DTE: >= 50% da janela OU janela contínua >= 72h (3 dias) com >= 40% total (ciclo de libração polar)
+    sol_aprovado = (pct_luz_real >= 50.0) or (maior_janela_sol_h >= 156 and pct_luz_real >= 40.0)
+    dte_aprovado = (pct_comunicacao_real >= 50.0) or (maior_janela_terra_h >= 72 and pct_comunicacao_real >= 40.0)
+
+    if pct_luz_real >= 70.0 and dte_aprovado:
+        veredito = "OPTIMAL POLAR SITE (SUSTAINED)"
+    elif sol_aprovado and dte_aprovado:
+        veredito = "VIABLE MISSION (SORTIE / CLPS)"
+    elif sol_aprovado and not dte_aprovado:
         veredito = "REQUIRES ORBITAL RELAY"
     else:
-        veredito = "UNVIABLE (EXTREME SHADOW)"
+        veredito = "CRITICAL SHADOW / CONSTRAINED"
 
     return {
         "veredito": veredito,
@@ -153,13 +161,14 @@ def analisar_metricas(dados: dict) -> dict:
         "evento_sol": evento_sol,
         "evento_terra": evento_terra,
         "maior_janela_continua_sol_horas": maior_janela_sol_h,
+        "maior_janela_continua_terra_horas": maior_janela_terra_h,
         "maior_noite_continua_horas": maior_janela_noite_h,
         "duracao_crepusculo_min": duracao_crepusculo_min,
         "latencia_ida_volta_seg": round(latencia_media_seg, 2),
         "contexto_educacional": (
             f"Accounting for local LOLA topography, the Sun illuminates the landing site for {pct_luz_real:.1f}% of the window "
-            f"(surrounding ridges and craters block {perda_sombra_terreno_pct:.1f}% of theoretical flat-horizon sunlight). "
-            f"The longest continuous lunar night lasts {maior_janela_noite_h} hours. "
+            f"(longest continuous sunlit window: {maior_janela_sol_h}h; surrounding ridges block {perda_sombra_terreno_pct:.1f}% of theoretical flat-horizon sunlight). "
+            f"Direct-to-Earth (DTE) link is available for {pct_comunicacao_real:.1f}% of the window (up to {maior_janela_terra_h}h continuous DTE). "
             f"Because the Sun reaches a maximum elevation of {elevacao_max_sol:.1f}°, vertical solar arrays "
             f"achieve {media_vert_pct:.1f}% average geometric efficiency versus {media_horiz_pct:.1f}% for horizontal arrays."
         ),
