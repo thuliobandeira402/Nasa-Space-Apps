@@ -1,9 +1,9 @@
 /**
- * Módulo de Visualização Científica — Plotly.js
- * Containers no HTML:
- *  - #chart-elevation (Elevação do Sol e da Terra ao longo do tempo)
- *  - #chart-sky       (Skyplot polar 360° com relevo do horizonte)
- *  - #chart-compare   (Comparação de cenários)
+ * Scientific Visualization Module — Plotly.js
+ * HTML Containers:
+ *  - #chart-elevation (Sun and Earth elevation over time)
+ *  - #chart-sky       (360° polar skyplot with horizon terrain mask)
+ *  - #chart-compare   (Scenario comparison)
  */
 
 const THEME = {
@@ -22,14 +22,14 @@ const THEME = {
 
 function getPlotly() {
   if (!window.Plotly) {
-    throw new Error('Plotly.js não carregado no HTML.');
+    throw new Error('Plotly.js not loaded in HTML.');
   }
   return window.Plotly;
 }
 
 /**
- * 1. Timeline Dinâmica (#chart-elevation)
- * Elevação do Sol e da Terra + faixas de janela operacional simultânea.
+ * 1. Dynamic Timeline (#chart-elevation)
+ * Sun and Earth elevation + simultaneous operational window bands.
  */
 export function renderElevationTimeline(simData, containerId = 'chart-elevation') {
   const Plotly = getPlotly();
@@ -54,7 +54,7 @@ export function renderElevationTimeline(simData, containerId = 'chart-elevation'
     },
   ];
 
-  // Destaca períodos em que Sol (acima do relevo) e Terra estão visíveis ao mesmo tempo
+  // Highlights periods where Sun (above terrain) and Earth are visible simultaneously
   let winStart = null;
   timeline.forEach((pt, idx) => {
     if (pt.operational_window && !winStart) {
@@ -80,22 +80,22 @@ export function renderElevationTimeline(simData, containerId = 'chart-elevation'
     {
       type: 'scatter',
       mode: 'lines',
-      name: '☀️ Elevação Solar (°)',
+      name: '☀️ Sun Elevation (°)',
       x: xDates,
       y: ySun,
       line: { color: THEME.sunLit, width: 2.3 },
       fill: 'tozeroy',
       fillcolor: 'rgba(251, 191, 36, 0.12)',
-      hovertemplate: '%{x}<br>Sol: <b>%{y:.2f}°</b><extra></extra>',
+      hovertemplate: '%{x}<br>Sun: <b>%{y:.2f}°</b><extra></extra>',
     },
     {
       type: 'scatter',
       mode: 'lines',
-      name: '🌍 Elevação da Terra (°)',
+      name: '🌍 Earth Elevation (°)',
       x: xDates,
       y: yEarth,
       line: { color: THEME.earth, width: 1.9, dash: 'dash' },
-      hovertemplate: '%{x}<br>Terra: <b>%{y:.2f}°</b><extra></extra>',
+      hovertemplate: '%{x}<br>Earth: <b>%{y:.2f}°</b><extra></extra>',
     },
   ];
 
@@ -119,12 +119,12 @@ export function renderElevationTimeline(simData, containerId = 'chart-elevation'
           { count: 3, label: '3d', step: 'day', stepmode: 'backward' },
           { count: 7, label: '7d', step: 'day', stepmode: 'backward' },
           { count: 15, label: '15d', step: 'day', stepmode: 'backward' },
-          { step: 'all', label: 'Tudo' },
+          { step: 'all', label: 'All' },
         ],
       },
     },
     yaxis: {
-      title: 'Elevação (°)',
+      title: 'Elevation (°)',
       gridcolor: THEME.grid,
       zeroline: false,
     },
@@ -134,8 +134,8 @@ export function renderElevationTimeline(simData, containerId = 'chart-elevation'
 }
 
 /**
- * 2. Skyplot Polar 360° (#chart-sky)
- * Integra máscara de relevo do horizonte, trajetória solar (visível vs. eclipsada) e Terra.
+ * 2. 360° Polar Skyplot (#chart-sky)
+ * Integrates horizon terrain mask, solar trajectory (visible vs. eclipsed), and Earth.
  */
 export function renderSkyplotPolar(simData, containerId = 'chart-sky') {
   const Plotly = getPlotly();
@@ -152,48 +152,48 @@ export function renderSkyplotPolar(simData, containerId = 'chart-sky') {
   const horizonMaskTrace = {
     type: 'scatterpolar',
     mode: 'lines',
-    name: 'Relevo do Horizonte',
+    name: 'Horizon Terrain',
     theta: [...azFwd, ...azRev],
     r: [...elFwd, ...azRev.map(() => 0)],
     fill: 'toself',
     fillcolor: THEME.horizonFill,
     line: { color: THEME.horizonLine, width: 1.5 },
-    hovertemplate: 'Azimute: %{theta:.0f}°<br>Relevo: %{r:.2f}°<extra>Horizonte</extra>',
+    hovertemplate: 'Azimuth: %{theta:.0f}°<br>Terrain: %{r:.2f}°<extra>Horizon</extra>',
   };
 
   const sunLit = timeline.filter((p) => p.sun_visible);
   const sunLitTrace = {
     type: 'scatterpolar',
     mode: 'lines+markers',
-    name: '☀️ Sol (Acima do Relevo)',
+    name: '☀️ Sun (Above Terrain)',
     theta: sunLit.map((p) => p.sun_azimuth_deg),
     r: sunLit.map((p) => Math.max(0, p.sun_elevation_deg)),
     marker: { size: 5, color: THEME.sunLit },
     line: { color: THEME.sunLit, width: 2 },
-    hovertemplate: 'Azimute: %{theta:.1f}°<br>Elevação Sol: %{r:.2f}°<extra>Iluminado</extra>',
+    hovertemplate: 'Azimuth: %{theta:.1f}°<br>Sun Elevation: %{r:.2f}°<extra>Illuminated</extra>',
   };
 
   const sunBlocked = timeline.filter((p) => !p.sun_visible);
   const sunBlockedTrace = {
     type: 'scatterpolar',
     mode: 'markers',
-    name: '🌑 Sol (Bloqueado/Sombra)',
+    name: '🌑 Sun (Blocked/Shadow)',
     theta: sunBlocked.map((p) => p.sun_azimuth_deg),
     r: sunBlocked.map((p) => Math.max(0, p.sun_elevation_deg)),
     marker: { size: 4, symbol: 'x', color: THEME.sunShadow },
-    hovertemplate: 'Azimute: %{theta:.1f}°<br>Elevação Sol: %{r:.2f}°<extra>Sombra</extra>',
+    hovertemplate: 'Azimuth: %{theta:.1f}°<br>Sun Elevation: %{r:.2f}°<extra>Shadow</extra>',
   };
 
   const earthVis = timeline.filter((p) => p.earth_visible);
   const earthTrace = {
     type: 'scatterpolar',
     mode: 'lines+markers',
-    name: '🌍 Terra (Sinal DTE)',
+    name: '🌍 Earth (DTE Signal)',
     theta: earthVis.map((p) => p.earth_azimuth_deg),
     r: earthVis.map((p) => p.earth_elevation_deg),
     marker: { size: 5, color: THEME.earth, symbol: 'diamond' },
     line: { color: THEME.earth, width: 1.8, dash: 'dot' },
-    hovertemplate: 'Azimute: %{theta:.1f}°<br>Elevação Terra: %{r:.2f}°<extra>Terra</extra>',
+    hovertemplate: 'Azimuth: %{theta:.1f}°<br>Earth Elevation: %{r:.2f}°<extra>Earth</extra>',
   };
 
   const layout = {
@@ -213,7 +213,7 @@ export function renderSkyplotPolar(simData, containerId = 'chart-sky') {
         linecolor: THEME.grid,
       },
       radialaxis: {
-        range: [18, 0], // Foco nos primeiros 18° acima do horizonte lunar
+        range: [18, 0], // Focus on the first 18° above the lunar horizon
         ticksuffix: '°',
         angle: 45,
         gridcolor: THEME.grid,
@@ -232,7 +232,7 @@ export function renderSkyplotPolar(simData, containerId = 'chart-sky') {
 }
 
 /**
- * 3. Gráfico Comparador de Cenários (#chart-compare)
+ * 3. Scenario Comparison Chart (#chart-compare)
  */
 export function renderComparisonChart(scenarios = [], containerId = 'chart-compare') {
   const Plotly = getPlotly();
@@ -250,14 +250,14 @@ export function renderComparisonChart(scenarios = [], containerId = 'chart-compa
   const traces = [
     {
       type: 'bar',
-      name: '☀️ Iluminação Solar (%)',
+      name: '☀️ Solar Illumination (%)',
       x: labels,
       y: scenarios.map((s) => s.sun_fraction_pct),
       marker: { color: THEME.sunLit },
     },
     {
       type: 'bar',
-      name: '🌍 Visibilidade Terra (%)',
+      name: '🌍 Earth Visibility (%)',
       x: labels,
       y: scenarios.map((s) => s.earth_fraction_pct),
       marker: { color: THEME.earth },
@@ -271,7 +271,7 @@ export function renderComparisonChart(scenarios = [], containerId = 'chart-compa
     font: { color: THEME.text, family: 'system-ui, sans-serif', size: 12 },
     margin: { t: 25, b: 45, l: 45, r: 20 },
     legend: { orientation: 'h', y: 1.18, x: 0 },
-    yaxis: { range: [0, 100], title: '% da Janela', gridcolor: THEME.grid },
+    yaxis: { range: [0, 100], title: '% of Window', gridcolor: THEME.grid },
     xaxis: { gridcolor: THEME.grid },
   };
 
