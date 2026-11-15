@@ -20,12 +20,12 @@
 
 | **1. Mission Viability Dashboard & 3D Local Surface** | **2. 3D Lunar Globe (LRO/LOLA Polar Hillshade)** |
 | :---: | :---: |
-| ![3D Local Surface & KPI Dashboard](./docs/screenshots/dashboard_surface.jpg) | ![3D Lunar Globe View](./docs/screenshots/globe_lola.jpg) |
+| ![3D Local Surface & KPI Dashboard](./lunnar-site-planner/docs/screenshots/dashboard_surface.jpg) | ![3D Lunar Globe View](./lunnar-site-planner/docs/screenshots/globe_lola.jpg) |
 | *Real* $128 \times 128$ *LOLA DEM (*$36 \times 36\text{ km}$*) with real-time solar shadows, DTE telemetry beam, and GO/NO-GO cards.* | *Selenographic inspection with cached* $512 \times 512$ *LOLA polar hillshade cap and real-time Sun/Earth vectors.* |
 
 | **3. Trans-Lunar Injection (TLI) Transfer View** | **4. Synchronized Elevation Timeline &** $360^\circ$ **Skyplot** |
 | :---: | :---: |
-| ![TLI Orbital Trajectory](./docs/screenshots/tli_transfer.jpg) | ![Plotly Scientific Charts](./docs/screenshots/plotly_charts.jpg) |
+| ![TLI Orbital Trajectory](./lunnar-site-planner/docs/screenshots/tli_transfer.jpg) | ![Plotly Scientific Charts](./lunnar-site-planner/docs/screenshots/plotly_charts.jpg) |
 | *Earth–Moon–Sun orbital geometry using true JPL `DE421` arrival vectors.* | *Interactive click-to-seek elevation timeline with green simultaneous operational windows and* $360^\circ$ *polar skyplot.* |
 
 ---
@@ -34,7 +34,7 @@
 
 For a complete derivation of the mathematical and geodetic models implemented in the **UrbanAstro** backend engine, read our full technical paper included in this repository:
 
-👉 [**📄 Read the Technical Engineering Report (`docs/UrbanAstro_Technical_Report.pdf`)**](./docs/UrbanAstro_Technical_Report.pdf)
+👉 [**📄 Read the Technical Engineering Report (`docs/UrbanAstro_Technical_Report.pdf`)**](./lunnar-site-planner/docs/UrbanAstro_Technical_Report.pdf)
 
 **What the report covers:**
 
