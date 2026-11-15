@@ -130,6 +130,11 @@ const layout = {
     plot_bgcolor: THEME.plot,
     font: { color: THEME.text, family: 'system-ui, sans-serif', size: 12 },
     hovermode: 'x unified',
+    hoverlabel: {
+      bgcolor: '#0b1120',
+      bordercolor: '#334155',
+      font: { color: '#f8fafc', family: 'system-ui, sans-serif', size: 12 },
+    },
     dragmode: false,
     shapes: [...baseShapes, cursorShape],
     legend: { orientation: 'h', y: 1.16, x: 0 },
