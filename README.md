@@ -20,12 +20,12 @@
 
 | **1. Mission Viability Dashboard & 3D Local Surface** | **2. 3D Lunar Globe (LRO/LOLA Polar Hillshade)** |
 | :---: | :---: |
-| ![3D Local Surface & KPI Dashboard](./lunnar-site-planner/docs/screenshots/dashboard_surface.png) | ![3D Lunar Globe View](./docs/screenshots/globe_lola.png) |
+| ![3D Local Surface & KPI Dashboard](./docs/screenshots/dashboard_surface.jpg) | ![3D Lunar Globe View](./docs/screenshots/globe_lola.jpg) |
 | *Real* $128 \times 128$ *LOLA DEM (*$36 \times 36\text{ km}$*) with real-time solar shadows, DTE telemetry beam, and GO/NO-GO cards.* | *Selenographic inspection with cached* $512 \times 512$ *LOLA polar hillshade cap and real-time Sun/Earth vectors.* |
 
 | **3. Trans-Lunar Injection (TLI) Transfer View** | **4. Synchronized Elevation Timeline &** $360^\circ$ **Skyplot** |
 | :---: | :---: |
-| ![TLI Orbital Trajectory](./docs/screenshots/tli_transfer.png) | ![Plotly Scientific Charts](./docs/screenshots/plotly_charts.png) |
+| ![TLI Orbital Trajectory](./docs/screenshots/tli_transfer.jpg) | ![Plotly Scientific Charts](./docs/screenshots/plotly_charts.jpg) |
 | *Earth–Moon–Sun orbital geometry using true JPL `DE421` arrival vectors.* | *Interactive click-to-seek elevation timeline with green simultaneous operational windows and* $360^\circ$ *polar skyplot.* |
 
 ---
@@ -47,18 +47,18 @@ For a complete derivation of the mathematical and geodetic models implemented in
 
 ## 🚀 Key Features
 
-* **High-Precision Ephemeris Engine (`de421.bsp`):** Computes topocentric Sun and Earth apparent elevation, azimuth, range, and lunar phase in the `MOON_ME_DE421` frame, accounting for the apparent solar disc semidiameter ($0.265^\circ$) and zero atmospheric refraction.
-* **100% Real LRO/LOLA Topographic Engine (`LDEM_80S_240MPP_COMPACT.TIF`):**
+- **High-Precision Ephemeris Engine (`de421.bsp`):** Computes topocentric Sun and Earth apparent elevation, azimuth, range, and lunar phase in the `MOON_ME_DE421` frame, accounting for the apparent solar disc semidiameter ($0.265^\circ$) and zero atmospheric refraction.
+- **100% Real LRO/LOLA Topographic Engine (`LDEM_80S_240MPP_COMPACT.TIF`):**
   * **Polar Coverage (**$\phi \le -80^\circ\text{S}$**):** Extracts $360^\circ$ horizon obstruction profiles over a $100\text{ km}$ **radius**, $128 \times 128$ **3D elevation meshes** ($36 \times 36\text{ km}$ span), and native-resolution median touchdown slopes (`slope_deg`) from $240\text{ m/px}$ LRO/LOLA South Polar Stereographic GeoTIFF data.
   * **Reference Sphere Fallback (**$\phi > -80^\circ\text{S}$**):** Outside polar DEM coverage (e.g., Apollo 11 equatorial baseline), the engine disables synthetic 3D terrain and evaluates analytical horizon geometry without fabricating artificial relief.
-* **Dual User Modes:**
+- **Dual User Modes:**
   * 🛠️ **Engineer Mode:** Exposes custom selenographic coordinates, integration step controls, real-time `GO / NO-GO / INCONCLUSIVE` gate checks, vertical vs. horizontal solar array efficiency, DTE round-trip signal latency, and multi-scenario trade-off comparison.
   * 🚀 **Explorer Mode:** Translates complex orbital mechanics into intuitive visual explanations and guided takeaways for students and the general public.
-* **Interactive 3D Orbital & Surface Simulation (React 18 + Three.js):**
+- **Interactive 3D Orbital & Surface Simulation (React 18 + Three.js):**
   1. *Trans-Lunar Injection (TLI) Transfer View* (LEO departure, translunar coast, and LOI polar capture).
   2. *3D Lunar Globe View* (selenographic site pin with real LOLA polar hillshade overlay).
   3. *Local Surface View* (real-time shadow casting, `Natural / Elevation / Slope` heatmaps, camera presets `Lander POV / Crater Rim / Top-Down`, playback speed controls `1x/2x/4x`, and a visual operational window heatmap bar).
-* **Bidirectional Scientific Charts (Plotly.js):**
+- **Bidirectional Scientific Charts (Plotly.js):**
   * Dynamic Sun & Earth elevation timeline with highlighted **Simultaneous Operational Windows** and a real-time synchronized cursor (**clicking any point on the chart seeks the 3D scene to that exact UTC timestamp**).
   * $360^\circ$ Polar Skyplot overlaying the local LOLA horizon mask against solar and terrestrial paths.
 
@@ -86,7 +86,7 @@ UrbanAstro/
 ├── requirements.txt          # Python scientific & web dependencies
 ├── docs/
 │   ├── UrbanAstro_Technical_Report.pdf  # Full LaTeX technical engineering paper
-│   └── screenshots/          # Application UI & 3D simulation screenshots
+│   └── screenshots/          # Application UI & 3D simulation screenshots (.jpg)
 ├── backend/
 │   ├── main.py               # FastAPI server, REST endpoints, LRU-cached hillshade & GO/NO-GO gate logic
 │   ├── ephemeris_engine.py   # Vectorized Skyfield + JPL DE421 & MOON_ME_DE421 topocentric calculations
@@ -117,7 +117,7 @@ We provide an automated bootstrapper (**`backend_loader.py`**) that handles virt
 
 ### Prerequisites
 
-* Python **3.10+**
+- Python **3.10+**
 
 ### Run with a single command:
 
@@ -174,11 +174,11 @@ A candidate site and mission window receives a **GO** classification when all th
 
 ## 👥 UrbanAstro Engineering Team
 
-* **Thúlio Roberto Bandeira Serpa**
-* **Pedro Henrique Marques dos Santos**
-* **Ian Cassundé dos Santos**
-* **Rayanne Marília Lima de Mendonça**
-* **Cauã Vitor da Silva Araújo**
+- **Thúlio Roberto Bandeira Serpa**
+- **Pedro Henrique Marques dos Santos**
+- **Ian Cassundé dos Santos**
+- **Rayanne Marília Lima de Mendonça**
+- **Cauã Vitor da Silva Araújo**
 
 ---
 
@@ -186,17 +186,17 @@ A candidate site and mission window receives a **GO** classification when all th
 
 In accordance with the official rules and guidelines of the Space Apps Challenge:
 
-* **Code & Architecture:** Generative AI tools (Google Gemini) were used strictly as a pair-programming assistant to structure FastAPI endpoints, refine the interactive UI components, and optimize the Three.js / WebGL 3D shaders and scene rendering.
-* **Scientific Data Integrity:** No astronomical, orbital, or topographic data was generated by AI. All simulations rely exclusively on real, open-science datasets: JPL SPICE planetary ephemerides (`de421.bsp`, `moon_pa_de421_1900-2050.bpc`, `MOON_ME_DE421`) and the LRO/LOLA Digital Elevation Model (`LDEM_80S_240MPP_COMPACT.TIF`).
-* **Branding & Trademarks:** This is an independent project (**UrbanAstro**). All visual assets, emblems, and interfaces are original and do not use, contain, or modify official agency logos, flags, or mission identifiers.
+- **Code & Architecture:** Generative AI tools (Google Gemini) were used strictly as a pair-programming assistant to structure FastAPI endpoints, refine the interactive UI components, and optimize the Three.js / WebGL 3D shaders and scene rendering.
+- **Scientific Data Integrity:** No astronomical, orbital, or topographic data was generated by AI. All simulations rely exclusively on real, open-science datasets: JPL SPICE planetary ephemerides (`de421.bsp`, `moon_pa_de421_1900-2050.bpc`, `MOON_ME_DE421`) and the LRO/LOLA Digital Elevation Model (`LDEM_80S_240MPP_COMPACT.TIF`).
+- **Branding & Trademarks:** This is an independent project (**UrbanAstro**). All visual assets, emblems, and interfaces are original and do not use, contain, or modify official agency logos, flags, or mission identifiers.
 
 ---
 
 ## 🛰️ Data Sources & Scientific References
 
-* **PDS Geosciences Node (LRO/LOLA):** Lunar Orbiter Laser Altimeter South Polar Gridded Data Records (`LDEM_80S_240MPP_COMPACT.TIF`). Available at: https://pds-geosciences.wustl.edu/missions/lro/lola.htm
-* **NAIF / JPL Solar System Dynamics:** SPICE Generic Planetary Ephemeris Kernels (`de421.bsp`, `MOON_ME_DE421`). Available at: https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/
-* **Mazarico et al. (2011):** *"Illumination conditions of the lunar polar regions using LOLA topography,"* Icarus, 211(2), 1066–1081.
-* **Horn (1981):** *"Hill shading and the reflectance map,"* Proceedings of the IEEE, 69(1), 14–47.
-* **Skyfield (Rhodes, 2019):** High-precision research-grade positions for planets and Earth satellites (`ascl:1907.024`). Available at: https://rhodesmill.org/skyfield/
-* Built with ❤️ by the **UrbanAstro** team for the **2026 NASA Space Apps Challenge**.
+- **PDS Geosciences Node (LRO/LOLA):** Lunar Orbiter Laser Altimeter South Polar Gridded Data Records (`LDEM_80S_240MPP_COMPACT.TIF`). Available at: https://pds-geosciences.wustl.edu/missions/lro/lola.htm
+- **NAIF / JPL Solar System Dynamics:** SPICE Generic Planetary Ephemeris Kernels (`de421.bsp`, `MOON_ME_DE421`). Available at: https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/
+- **Mazarico et al. (2011):** *"Illumination conditions of the lunar polar regions using LOLA topography,"* Icarus, 211(2), 1066–1081.
+- **Horn (1981):** *"Hill shading and the reflectance map,"* Proceedings of the IEEE, 69(1), 14–47.
+- **Skyfield (Rhodes, 2019):** High-precision research-grade positions for planets and Earth satellites (`ascl:1907.024`). Available at: https://rhodesmill.org/skyfield/
+- Built with ❤️ by the **UrbanAstro** team for the **2026 NASA Space Apps Challenge**.
