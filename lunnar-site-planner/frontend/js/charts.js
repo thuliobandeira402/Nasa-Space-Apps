@@ -125,11 +125,12 @@ export function renderElevationTimeline(simData, containerId = 'chart-elevation'
     },
   ];
 
-  const layout = {
+const layout = {
     paper_bgcolor: THEME.paper,
     plot_bgcolor: THEME.plot,
     font: { color: THEME.text, family: 'system-ui, sans-serif', size: 12 },
     hovermode: 'x unified',
+    dragmode: false,
     shapes: [...baseShapes, cursorShape],
     legend: { orientation: 'h', y: 1.16, x: 0 },
     margin: { t: 48, b: 40, l: 48, r: 20 },

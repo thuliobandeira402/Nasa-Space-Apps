@@ -4,7 +4,9 @@
  */
 
 const CONFIG = window.LUNAR_API_CONFIG || {
-  BASE_URL: window.location.port && window.location.port !== '8000' ? 'http://127.0.0.1:8000' : '',
+  BASE_URL: ['localhost', '127.0.0.1'].includes(window.location.hostname) && window.location.port !== '8000'
+  ? 'http://127.0.0.1:8000'
+  : '',
   ENDPOINTS: {
     SITES: '/api/sites',
     FASES: '/api/fases',
@@ -30,7 +32,7 @@ export function getLolaPolarMapUrl() {
 
 async function requestApi(path, options = {}) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000);
+  const timeoutId = setTimeout(() => controller.abort(), 90000);
 
   try {
     const response = await fetch(`${CONFIG.BASE_URL}${path}`, {
