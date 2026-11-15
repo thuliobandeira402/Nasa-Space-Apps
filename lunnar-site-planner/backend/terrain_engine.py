@@ -1,5 +1,6 @@
 # backend/terrain_engine.py
 import math
+from functools import lru_cache
 import numpy as np
 from data_loader import LOLA_DEM_PATH
 from sites_catalog import SITES_CATALOG
@@ -30,24 +31,19 @@ def _interpolar_horizonte(horizonte_360: np.ndarray, azimutes: np.ndarray) -> np
     return np.interp(az_norm, xp, fp)
 
 
-def gerar_perfil_horizonte_360(lat: float, lon: float, elevacao_m: float = 0.0) -> dict:
-    """
-    Obtém o perfil topográfico 360° (raio 100 km) e a malha 3D (36 km x 36 km)
-    exclusivamente do GeoTIFF real NASA LRO/LOLA para a região polar sul (lat <= -80°).
-    Fora da cobertura polar do DEM (-80°S), utiliza esfera lunar de referência (0°),
-    sem gerar relevo fictício ou sintético.
-    """
+@lru_cache(maxsize=32)
+def _gerar_perfil_horizonte_cached(lat_r: float, lon_r: float, elev_r: float) -> dict:
     azimutes = np.arange(0, 360, 1)
-    site_id = identificar_site_conhecido(lat, lon)
+    site_id = identificar_site_conhecido(lat_r, lon_r)
 
-    if lat <= -80.0:
+    if lat_r <= -80.0:
         if not LOLA_DEM_PATH.exists():
             raise FileNotFoundError(
                 f"NASA LOLA DEM GeoTIFF not found at {LOLA_DEM_PATH}. Place LDEM_80S_240MPP_COMPACT.TIF in data/lola_dem/."
             )
 
-        horizonte_real = horizonte_lola(lat, lon, str(LOLA_DEM_PATH), raio_m=100_000.0)
-        malha = extrair_malha_terreno_lola(lat, lon, str(LOLA_DEM_PATH), grid_size=128, span_km=36.0)
+        horizonte_real = horizonte_lola(lat_r, lon_r, str(LOLA_DEM_PATH), raio_m=100_000.0)
+        malha = extrair_malha_terreno_lola(lat_r, lon_r, str(LOLA_DEM_PATH), grid_size=128, span_km=36.0)
         res_m = int(round(malha["pixel_m"]))
 
         return {
@@ -73,8 +69,16 @@ def gerar_perfil_horizonte_360(lat: float, lon: float, elevacao_m: float = 0.0) 
         "obstaculos_principais": [],
         "terrain_grid": None,
         "slope_deg_real": None,
-        "center_elevation_m_real": elevacao_m,
+        "center_elevation_m_real": elev_r,
     }
+
+
+def gerar_perfil_horizonte_360(lat: float, lon: float, elevacao_m: float = 0.0) -> dict:
+    """
+    Usa cache em memória por coordenada (arredondada a 4 casas decimais ~ 3 metros)
+    para evitar releitura repetitiva do GeoTIFF LOLA.
+    """
+    return _gerar_perfil_horizonte_cached(round(float(lat), 4), round(float(lon), 4), round(float(elevacao_m), 1))
 
 
 def aplicar_obstrucao_terreno(dados_efemerides: dict, perfil_horizonte: dict) -> dict:
@@ -93,8 +97,9 @@ def aplicar_obstrucao_terreno(dados_efemerides: dict, perfil_horizonte: dict) ->
     horizonte_direcao_terra = _interpolar_horizonte(horizonte_360, terra_az)
 
     sol_visivel = (sol_alt + 0.265) > horizonte_direcao_sol
-    terra_visivel = terra_alt > horizonte_direcao_terra
-    terra_link_rf_otimo = terra_alt > (horizonte_direcao_terra + 2.0)
+    # Garante que a Terra nunca seja considerada visível abaixo de 0° (atravessando a esfera lunar)
+    terra_visivel = terra_alt > np.maximum(0.0, horizonte_direcao_terra)
+    terra_link_rf_otimo = terra_alt > (np.maximum(0.0, horizonte_direcao_terra) + 2.0)
 
     folga_sol_graus = sol_alt - horizonte_direcao_sol
     folga_terra_graus = terra_alt - horizonte_direcao_terra

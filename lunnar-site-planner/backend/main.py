@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from rasterio.enums import Resampling
 from skyfield import almanac
-
+from functools import lru_cache
 from data_loader import LOLA_DEM_PATH, get_planetary_context
 from ephemeris_engine import calcular_visibilidade
 from metrics_analyzer import analisar_metricas
@@ -91,17 +91,10 @@ def _normalizar_efemerides(dados_brutos: list | dict, passo_horas: int) -> dict:
     }
 
 
-@app.get("/api/lola-polar-map")
-def obter_mapa_polar_lola():
-    """
-    Gera PNG real (512x512) de relevo sombreado (hillshade) diretamente do GeoTIFF
-    NASA LOLA do Polo Sul (-80°S a -90°S) para texturizar o Globo 3D.
-    """
-    if not LOLA_DEM_PATH.exists():
-        raise HTTPException(status_code=404, detail="LOLA DEM file not found.")
-
+@lru_cache(maxsize=1)
+def _gerar_png_mapa_polar_cached(dem_path_str: str) -> bytes:
     size = 512
-    with rasterio.open(LOLA_DEM_PATH) as src:
+    with rasterio.open(dem_path_str) as src:
         z = src.read(1, out_shape=(size, size), resampling=Resampling.bilinear).astype("float64")
         if src.nodata is not None:
             z[z == src.nodata] = np.nan
@@ -130,8 +123,24 @@ def obter_mapa_polar_lola():
         return struct.pack("!I", len(data)) + tag + data + struct.pack("!I", zlib.crc32(tag + data) & 0xFFFFFFFF)
 
     ihdr = struct.pack("!IIBBBBB", size, size, 8, 0, 0, 0, 0)
-    png_bytes = b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", compressed) + _chunk(b"IEND", b"")
-    return Response(content=png_bytes, media_type="image/png")
+    return b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", compressed) + _chunk(b"IEND", b"")
+
+
+@app.get("/api/lola-polar-map")
+def obter_mapa_polar_lola():
+    """
+    Retorna o PNG 512x512 de relevo sombreado (hillshade) do GeoTIFF NASA LOLA
+    diretamente da memória RAM após a primeira geração.
+    """
+    if not LOLA_DEM_PATH.exists():
+        raise HTTPException(status_code=404, detail="LOLA DEM file not found.")
+
+    png_bytes = _gerar_png_mapa_polar_cached(str(LOLA_DEM_PATH))
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @app.get("/api/sites")
@@ -435,10 +444,20 @@ def simular_pouso(req: PousoRequest):
 
     if seguranca is None:
         go_nogo = "INCONCLUSIVE"
+        veredito_final = "SLOPE DATA UNAVAILABLE (OUTSIDE DEM)"
     elif iluminacao and comunicacao and seguranca:
         go_nogo = "GO"
+        veredito_final = m["veredito"]
     else:
         go_nogo = "NO-GO"
+        if not seguranca:
+            veredito_final = f"EXCEEDS SLOPE LIMIT ({slope}° > 15°)"
+        elif not comunicacao and iluminacao:
+            veredito_final = "REQUIRES ORBITAL RELAY (DTE < 50%)"
+        elif not iluminacao:
+            veredito_final = "CRITICAL SHADOW / LOW SOLAR WINDOW"
+        else:
+            veredito_final = m["veredito"]
 
     return {
         "site_id": site_id,
@@ -465,7 +484,7 @@ def simular_pouso(req: PousoRequest):
             "comunicacao_direta": comunicacao,
         },
         "go_nogo": go_nogo,
-        "veredito_backend": m["veredito"],
+        "veredito_backend": veredito_final,
         "assumptions": [
             f"Lunar Ephemerides & Orientation: NASA/JPL SPICE (DE421, MOON_ME_DE421), {passo_h}h integration step.",
             f"360° Horizon (100 km raycast with lunar curvature correction) & 3D Local Terrain (36 × 36 km, 5×5 median baseline slope): {perfil['modo_terreno']}.",
@@ -478,7 +497,6 @@ def simular_pouso(req: PousoRequest):
         "evento_terra": m["evento_terra"],
         "metricas_resumo": m,
     }
-
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 if FRONTEND_DIR.exists():
