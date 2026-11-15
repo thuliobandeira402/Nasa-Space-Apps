@@ -3,7 +3,7 @@
  * Aligned with NASA Artemis / CLPS Mission Feasibility Criteria
  */
 
-import { renderComparisonChart } from './charts.js';
+import { renderComparisonChart, updateChartsCursor } from './charts.js';
 
 const uiState = {
   simData: null,
@@ -177,6 +177,7 @@ export function syncStepMetrics(stepIndex = 0) {
     `;
   }
 
+  updateChartsCursor(safeIdx);
   refreshCountdownsOnly();
 }
 
@@ -220,6 +221,15 @@ export function getComparedScenarios() {
 
 export function addScenarioToComparator(simData) {
   if (!simData) return;
+  const isDuplicate = uiState.comparedList.some(
+    (s) =>
+      s.site_name === simData.site_name &&
+      s.start_date === simData.start_date &&
+      s.days === simData.days &&
+      Math.abs((s.lat ?? 0) - (simData.lat ?? 0)) < 0.001
+  );
+  if (isDuplicate) return;
+
   uiState.comparedList.push(simData);
   renderComparatorTable();
 }
@@ -245,11 +255,29 @@ function renderComparatorTable() {
   emptyMsg.hidden = true;
   table.hidden = false;
 
+  // Identifica o melhor cenário com base no status GO e na média combinada Sol + DTE
+  let bestIdx = -1;
+  let bestScore = -1;
+  if (uiState.comparedList.length >= 2) {
+    uiState.comparedList.forEach((item, idx) => {
+      const goBonus = item.go_nogo === 'GO' ? 1000 : 0;
+      const score = goBonus + (item.sun_fraction_pct || 0) * 0.6 + (item.earth_fraction_pct || 0) * 0.4;
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = idx;
+      }
+    });
+  }
+
   tbody.innerHTML = uiState.comparedList
     .map(
       (item, index) => `
-      <tr>
-        <td><strong>${item.site_name}</strong><br><small>${item.start_date} (${item.days}d)</small></td>
+      <tr style="${index === bestIdx ? 'background: rgba(16, 185, 129, 0.08);' : ''}">
+        <td>
+          <strong>${item.site_name}</strong>
+          ${index === bestIdx ? '<span style="margin-left:6px;padding:2px 6px;border-radius:4px;background:#065f46;color:#6ee7b7;font-size:10px;font-weight:700;">★ BEST</span>' : ''}
+          <br><small>${item.start_date} (${item.days}d · Slope ${item.slope_deg ?? 'N/A'}°)</small>
+        </td>
         <td><strong style="color:${item.go_nogo === 'GO' ? '#34d399' : item.go_nogo === 'INCONCLUSIVE' ? '#fbbf24' : '#f87171'}">${item.go_nogo}</strong></td>
         <td>${item.sun_fraction_pct}%</td>
         <td>${item.earth_fraction_pct}%</td>

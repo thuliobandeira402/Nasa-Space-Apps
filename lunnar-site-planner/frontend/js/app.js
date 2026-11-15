@@ -806,11 +806,17 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
   const [vertExag, setVertExag] = useState(1.5);          // Local terrain vertical exaggeration (1.0x - 4.0x)
   const [stepIdx, setStepIdx] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [playSpeed, setPlaySpeed] = useState(1);          // 1x | 2x | 4x
 
+  const viewportWrapRef = useRef(null);
   const canvasWrapRef = useRef(null);
   const raycasterRef = useRef(new THREE.Raycaster());
   const sceneObjectsRef = useRef({
     viewMode: 'superficie',
+    camera: null,
+    controls: null,
+    camAnimTargetPos: null,
+    camAnimLookAt: null,
     globeMesh: null,
     earthCloudsMesh: null,
     earthSpinSphere: null,
@@ -874,19 +880,34 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
     setIsPlaying(false);
   }, [simData]);
 
+  // Escuta cliques vindos do gráfico Plotly para saltar diretamente para aquele horário no 3D
+  useEffect(() => {
+    const onSeekStep = (e) => {
+      const targetIdx = Number(e.detail);
+      if (!Number.isNaN(targetIdx) && targetIdx >= 0 && targetIdx < timeline.length) {
+        setIsPlaying(false);
+        setStepIdx(targetIdx);
+        if (onStepChange) onStepChange(targetIdx);
+      }
+    };
+    window.addEventListener('lunar:seek-step', onSeekStep);
+    return () => window.removeEventListener('lunar:seek-step', onSeekStep);
+  }, [timeline.length, onStepChange]);
+
   useEffect(() => {
     if (!isPlaying || timeline.length <= 1) return;
+    const intervalMs = Math.max(30, Math.round(140 / playSpeed));
     const timer = setInterval(() => {
       setStepIdx((prev) => {
         const next = prev + 1 >= timeline.length ? 0 : prev + 1;
         if (onStepChange) onStepChange(next);
         return next;
       });
-    }, 120);
+    }, intervalMs);
     return () => clearInterval(timer);
-  }, [isPlaying, timeline.length, onStepChange]);
+  }, [isPlaying, playSpeed, timeline.length, onStepChange]);
 
-  // Atualiza cores e exagero vertical APENAS da malha local do solo (sem distorcer Sol/Terra)
+  // Atualiza cores e exagero vertical APENAS da malha local do solo
   useEffect(() => {
     const refs = sceneObjectsRef.current;
     const grid = simData?.terrain_grid;
@@ -932,7 +953,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       }
     }
 
-    // Mantém o anel de horizonte na escala angular verdadeira (1.0x)
     if (refs.horizonBeltGroup) {
       refs.horizonBeltGroup.position.y = centerZ + 0.72;
       refs.horizonBeltGroup.scale.set(1, 1, 1);
@@ -948,7 +968,7 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
     if (!container) return;
 
     const width = container.clientWidth || 720;
-    const height = 430;
+    const height = container.clientHeight || 430;
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color('#030612');
@@ -968,7 +988,7 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
     controls.enableDamping = true;
     controls.dampingFactor = 0.06;
     controls.maxDistance = 90;
-    controls.minDistance = 1.8;
+    controls.minDistance = 1.4;
 
     const hemiLight = new THREE.HemisphereLight(0xdbeafe, 0x090d16, 0.16);
     scene.add(hemiLight);
@@ -998,6 +1018,10 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
 
     const refs = {
       viewMode,
+      camera,
+      controls,
+      camAnimTargetPos: null,
+      camAnimLookAt: null,
       globeMesh: null,
       earthCloudsMesh: null,
       earthSpinSphere: null,
@@ -1044,6 +1068,12 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       earthElevNow: initEarthEl,
       compassRadius: 24,
     };
+
+    // Cancela animação automática de câmera se o usuário arrastar o mouse
+    controls.addEventListener('start', () => {
+      refs.camAnimTargetPos = null;
+      refs.camAnimLookAt = null;
+    });
 
     if (viewMode === 'viagem') {
       camera.position.set(-0.2, 6.2, 10.6);
@@ -1287,7 +1317,7 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       refs.terrainBlockBadge = blockObj.terrainBlockBadge;
       refs.horizonBlockBadge = blockObj.horizonBlockBadge;
     } else {
-      // MODO 3: SUPERFÍCIE LOCAL (100% DADOS REAIS LOLA QUANDO DISPONÍVEL; PLANO DE REFERÊNCIA FORA DE -80°S)
+      // MODO 3: SUPERFÍCIE LOCAL LOLA
       const grid = simData?.terrain_grid;
       const gridSize = grid?.size || 32;
       const segments = gridSize - 1;
@@ -1356,7 +1386,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       refs.landerPadRing = landerObj.padRing;
       refs.landerTopPos = new THREE.Vector3(0, centerZ + 0.72, 0);
 
-      // Cordilheira 360° em escala angular verdadeira (1.0x)
       const horizonObj = buildHorizonRidgeMesh(simData?.horizon_profile || [], 24, -2.5);
       horizonObj.group.position.y = centerZ + 0.72;
       horizonObj.group.scale.set(1, 1, 1);
@@ -1369,7 +1398,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       scene.add(landerLight);
       refs.landerLight = landerLight;
 
-      // Posições astronômicas verdadeiras (SEM multiplicar por vertExag)
       const sunInitVisual = refs.landerTopPos.clone().add(azElToVector3(initSunAz, initSunEl, 34));
       const earthInitVisual = refs.landerTopPos.clone().add(azElToVector3(initEarthAz, initEarthEl, 30));
       refs.sunVisualTargetPos.copy(sunInitVisual);
@@ -1435,6 +1463,16 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       const elapsed = clock.getElapsedTime();
       const r = sceneObjectsRef.current;
 
+      // Voo suave para os Presets de Câmera
+      if (r.camAnimTargetPos && r.camAnimLookAt && r.camera && r.controls) {
+        r.camera.position.lerp(r.camAnimTargetPos, 0.09);
+        r.controls.target.lerp(r.camAnimLookAt, 0.09);
+        if (r.camera.position.distanceTo(r.camAnimTargetPos) < 0.08) {
+          r.camAnimTargetPos = null;
+          r.camAnimLookAt = null;
+        }
+      }
+
       if (r.earthCloudsMesh) {
         r.earthCloudsMesh.rotation.y = elapsed * 0.08;
       }
@@ -1486,7 +1524,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
             const dirToEarth = vecToEarth.clone().normalize();
 
             if (r.earthElevNow > 0 && r.horizonWallMesh) {
-              // Terra acima de 0°, mas bloqueada por montanha LOLA no horizonte
               r.horizonWallMesh.updateMatrixWorld();
               const raycaster = raycasterRef.current;
               raycaster.set(originPt, dirToEarth);
@@ -1498,7 +1535,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
                 r.commBeamEndPos.copy(originPt).addScaledVector(dirToEarth, 24.0);
               }
             } else {
-              // Terra geometricamente abaixo do horizonte lunar (elev <= 0°)
               const flatDir = new THREE.Vector3(dirToEarth.x, 0, dirToEarth.z).normalize();
               r.commBeamEndPos.copy(originPt).addScaledVector(flatDir, 24.0);
             }
@@ -1556,15 +1592,18 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
 
     const onResize = () => {
       if (!container) return;
-      camera.aspect = container.clientWidth / height;
+      const newH = container.clientHeight || 430;
+      camera.aspect = container.clientWidth / newH;
       camera.updateProjectionMatrix();
-      renderer.setSize(container.clientWidth, height);
+      renderer.setSize(container.clientWidth, newH);
     };
     window.addEventListener('resize', onResize);
+    document.addEventListener('fullscreenchange', onResize);
 
     return () => {
       cancelAnimationFrame(animId);
       window.removeEventListener('resize', onResize);
+      document.removeEventListener('fullscreenchange', onResize);
       controls.dispose();
       disposeSceneResources(scene);
       renderer.dispose();
@@ -1572,7 +1611,7 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
     };
   }, [viewMode, simData, viagemData]);
 
-  // Atualiza os alvos físicos a cada passo do slider (ângulos astronômicos verdadeiros)
+  // Atualiza os alvos físicos a cada passo do slider
   useEffect(() => {
     const refs = sceneObjectsRef.current;
     if (!refs.sunLight) return;
@@ -1651,7 +1690,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
         }
       }
 
-      // Elevações verdadeiras (não distorcidas pelo exagero vertical do solo)
       const sunVisualPos = refs.landerTopPos.clone().add(azElToVector3(sunAz, sunElev, 34));
       refs.sunVisualTargetPos.copy(sunVisualPos);
 
@@ -1704,6 +1742,50 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
     if (onStepChange) onStepChange(nextIdx);
   }
 
+  function applyCameraPreset(preset) {
+    const r = sceneObjectsRef.current;
+    const baseY = r.landerTopPos ? r.landerTopPos.y - 0.72 : 0;
+    if (preset === 'lander') {
+      r.camAnimTargetPos = new THREE.Vector3(-2.2, baseY + 1.45, 3.2);
+      r.camAnimLookAt = new THREE.Vector3(0, baseY + 0.85, -4.0);
+    } else if (preset === 'rim') {
+      r.camAnimTargetPos = new THREE.Vector3(-6.0, baseY + 5.8, 14.5);
+      r.camAnimLookAt = new THREE.Vector3(0, baseY + 0.3, 0);
+    } else if (preset === 'orbit') {
+      r.camAnimTargetPos = new THREE.Vector3(0, baseY + 26.0, 0.1);
+      r.camAnimLookAt = new THREE.Vector3(0, baseY, 0);
+    }
+  }
+
+  function toggleFullscreen() {
+    const el = viewportWrapRef.current;
+    if (!el) return;
+    if (!document.fullscreenElement) {
+      el.requestFullscreen?.().catch(() => {});
+    } else {
+      document.exitFullscreen?.().catch(() => {});
+    }
+  }
+
+  // Gera gradiente CSS para a barra visual de janelas operacionais (Verde = Sol+Terra, Amarelo = Sol, Escuro = Sombra)
+  const timelineGradient = React.useMemo(() => {
+    if (!timeline || timeline.length < 2) return '#1e293b';
+    const maxSamples = Math.min(timeline.length, 90);
+    const stops = [];
+    for (let i = 0; i < maxSamples; i++) {
+      const idx = Math.floor((i / (maxSamples - 1)) * (timeline.length - 1));
+      const pt = timeline[idx];
+      const pct = ((i / (maxSamples - 1)) * 100).toFixed(1);
+      const col = pt.sun_visible && pt.earth_visible
+        ? '#10b981'
+        : pt.sun_visible
+        ? '#f59e0b'
+        : '#334155';
+      stops.push(`${col} ${pct}%`);
+    }
+    return `linear-gradient(to right, ${stops.join(', ')})`;
+  }, [timeline]);
+
   const sunVis = Boolean(activeFrame.sun_visible);
   const earthElevNow = Number(activeFrame.earth_elevation_deg || 0);
   const earthVis = activeFrame.earth_visible !== undefined
@@ -1722,7 +1804,7 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       : 'LOI POLAR CAPTURE';
 
   return html`
-    <div className="space-y-3">
+    <div ref=${viewportWrapRef} className="space-y-3 bg-[#060a18] p-1 rounded-lg">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap gap-2">
           <button
@@ -1748,54 +1830,79 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
           </button>
         </div>
 
-        <span className="text-xs font-mono text-slate-400">
-          ${simData?.modo_terreno || 'NASA LOLA LDEM (Real Data)'} · ${fasesData?.fase_nome || 'JPL DE421 Ephemerides'}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-mono text-slate-400">
+            ${simData?.modo_terreno || 'NASA LOLA LDEM (Real Data)'} · ${fasesData?.fase_nome || 'JPL DE421 Ephemerides'}
+          </span>
+          <button
+            type="button"
+            className="btn small"
+            onClick=${toggleFullscreen}
+            title="Toggle Fullscreen 3D Viewport"
+          >
+            ⛶
+          </button>
+        </div>
       </div>
 
       ${viewMode === 'superficie' &&
       simData?.terrain_grid &&
       html`
-        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-300 py-1">
-          <div className="flex items-center gap-1.5">
-            <span>Color:</span>
-            <button
-              type="button"
-              className=${`btn small ${colorMode === 'natural' ? 'primary' : ''}`}
-              onClick=${() => setColorMode('natural')}
-            >
-              Natural
-            </button>
-            <button
-              type="button"
-              className=${`btn small ${colorMode === 'elevation' ? 'primary' : ''}`}
-              onClick=${() => setColorMode('elevation')}
-            >
-              Elevation
-            </button>
-            <button
-              type="button"
-              className=${`btn small ${colorMode === 'slope' ? 'primary' : ''}`}
-              onClick=${() => setColorMode('slope')}
-            >
-              Slope
-            </button>
+        <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-300 py-1">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-1.5">
+              <span>Color:</span>
+              <button
+                type="button"
+                className=${`btn small ${colorMode === 'natural' ? 'primary' : ''}`}
+                onClick=${() => setColorMode('natural')}
+              >
+                Natural
+              </button>
+              <button
+                type="button"
+                className=${`btn small ${colorMode === 'elevation' ? 'primary' : ''}`}
+                onClick=${() => setColorMode('elevation')}
+              >
+                Elevation
+              </button>
+              <button
+                type="button"
+                className=${`btn small ${colorMode === 'slope' ? 'primary' : ''}`}
+                onClick=${() => setColorMode('slope')}
+              >
+                Slope
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label htmlFor="vert-exag-slider" className="whitespace-nowrap">
+                Terrain Relief Scale <strong>${vertExag.toFixed(1)}x</strong>
+              </label>
+              <input
+                id="vert-exag-slider"
+                type="range"
+                min="1"
+                max="4"
+                step="0.25"
+                value=${vertExag}
+                onChange=${(e) => setVertExag(Number(e.target.value))}
+                style=${{ width: '95px' }}
+              />
+            </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <label htmlFor="vert-exag-slider" className="whitespace-nowrap">
-              Terrain Relief Scale <strong>${vertExag.toFixed(1)}x</strong>
-            </label>
-            <input
-              id="vert-exag-slider"
-              type="range"
-              min="1"
-              max="4"
-              step="0.25"
-              value=${vertExag}
-              onChange=${(e) => setVertExag(Number(e.target.value))}
-              style=${{ width: '110px' }}
-            />
+          <div className="flex items-center gap-1.5">
+            <span>Camera:</span>
+            <button type="button" className="btn small" onClick=${() => applyCameraPreset('lander')}>
+              🎯 Lander POV
+            </button>
+            <button type="button" className="btn small" onClick=${() => applyCameraPreset('rim')}>
+              ⛰️ Crater Rim
+            </button>
+            <button type="button" className="btn small" onClick=${() => applyCameraPreset('orbit')}>
+              🛰️ Top-Down
+            </button>
           </div>
         </div>
       `}
@@ -1859,33 +1966,55 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
         </div>
       </div>
 
-      <div className="slider-bar">
-        <button
-          type="button"
-          className="btn small"
-          onClick=${() => setIsPlaying((p) => !p)}
-          disabled=${timeline.length <= 1}
-        >
-          ${isPlaying ? '⏸ Pause' : '▶ Play'}
-        </button>
+      <div className="space-y-1.5">
+        <div className="slider-bar">
+          <button
+            type="button"
+            className="btn small"
+            onClick=${() => setIsPlaying((p) => !p)}
+            disabled=${timeline.length <= 1}
+          >
+            ${isPlaying ? '⏸ Pause' : '▶ Play'}
+          </button>
 
-        <label htmlFor="time-slider-3d" className="text-xs font-mono text-slate-300 whitespace-nowrap">
-          <strong>
-            ${activeFrame.timestamp
-              ? activeFrame.timestamp.replace('T', ' ').slice(0, 16) + ' UTC'
-              : 'Awaiting simulation'}
-          </strong>
-        </label>
+          <button
+            type="button"
+            className="btn small"
+            onClick=${() => setPlaySpeed((s) => (s === 1 ? 2 : s === 2 ? 4 : 1))}
+            title="Playback Speed"
+          >
+            ${playSpeed}x
+          </button>
 
-        <input
-          id="time-slider-3d"
-          type="range"
-          min="0"
-          max=${Math.max(0, timeline.length - 1)}
-          value=${stepIdx}
-          onChange=${handleSliderChange}
-          className="w-full accent-sky-500 cursor-pointer"
-        />
+          <label htmlFor="time-slider-3d" className="text-xs font-mono text-slate-300 whitespace-nowrap">
+            <strong>
+              ${activeFrame.timestamp
+                ? activeFrame.timestamp.replace('T', ' ').slice(0, 16) + ' UTC'
+                : 'Awaiting simulation'}
+            </strong>
+          </label>
+
+          <input
+            id="time-slider-3d"
+            type="range"
+            min="0"
+            max=${Math.max(0, timeline.length - 1)}
+            value=${stepIdx}
+            onChange=${handleSliderChange}
+            className="w-full accent-sky-500 cursor-pointer"
+          />
+        </div>
+
+        <div className="flex items-center gap-2 px-1">
+          <div
+            className="w-full h-2 rounded-full overflow-hidden border border-slate-700/80"
+            style=${{ background: timelineGradient }}
+            title="Mission Timeline Bar: Green = Operational Window (Sun + Earth DTE), Amber = Sun Only, Slate = Lunar Shadow"
+          ></div>
+          <span className="text-[10px] font-mono text-slate-400 whitespace-nowrap">
+            🟢 Sun+DTE · 🟡 Sun · ⚫ Shadow
+          </span>
+        </div>
       </div>
     </div>
   `;

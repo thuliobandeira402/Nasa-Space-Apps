@@ -1,5 +1,6 @@
 /**
  * Scientific Visualization Module — Plotly.js
+ * Synchronized with 3D Simulation Timeline & Interactive Click-to-Seek
  */
 
 const THEME = {
@@ -14,6 +15,13 @@ const THEME = {
   horizonFill: 'rgba(102, 102, 104, 0.45)',
   horizonLine: '#8d8d91',
   overlap: 'rgba(61, 220, 151, 0.14)',
+  cursorLine: '#38bdf8',
+};
+
+const chartState = {
+  simData: null,
+  baseShapes: [],
+  skyTraceCount: 0,
 };
 
 function getPlotly() {
@@ -31,13 +39,14 @@ export function renderElevationTimeline(simData, containerId = 'chart-elevation'
   const container = document.getElementById(containerId);
   if (!container || !simData?.timeline) return;
 
+  chartState.simData = simData;
   const timeline = simData.timeline;
   const xDates = timeline.map((p) => p.timestamp);
   const ySun = timeline.map((p) => p.sun_elevation_deg);
   const yMask = timeline.map((p) => p.terrain_mask_deg ?? 0);
   const yEarth = timeline.map((p) => p.earth_elevation_deg);
 
-  const shapes = [
+  const baseShapes = [
     {
       type: 'line',
       xref: 'paper',
@@ -55,7 +64,7 @@ export function renderElevationTimeline(simData, containerId = 'chart-elevation'
     if (pt.operational_window && !winStart) {
       winStart = pt.timestamp;
     } else if ((!pt.operational_window || idx === timeline.length - 1) && winStart) {
-      shapes.push({
+      baseShapes.push({
         type: 'rect',
         xref: 'x',
         yref: 'paper',
@@ -70,6 +79,19 @@ export function renderElevationTimeline(simData, containerId = 'chart-elevation'
       winStart = null;
     }
   });
+
+  chartState.baseShapes = baseShapes;
+
+  const cursorShape = {
+    type: 'line',
+    xref: 'x',
+    yref: 'paper',
+    x0: xDates[0],
+    x1: xDates[0],
+    y0: 0,
+    y1: 1,
+    line: { color: THEME.cursorLine, width: 2, dash: 'solid' },
+  };
 
   const traces = [
     {
@@ -108,7 +130,7 @@ export function renderElevationTimeline(simData, containerId = 'chart-elevation'
     plot_bgcolor: THEME.plot,
     font: { color: THEME.text, family: 'system-ui, sans-serif', size: 12 },
     hovermode: 'x unified',
-    shapes,
+    shapes: [...baseShapes, cursorShape],
     legend: { orientation: 'h', y: 1.16, x: 0 },
     margin: { t: 48, b: 40, l: 48, r: 20 },
     xaxis: {
@@ -135,6 +157,19 @@ export function renderElevationTimeline(simData, containerId = 'chart-elevation'
   };
 
   Plotly.react(container, traces, layout, { responsive: true, displaylogo: false });
+
+  // Clique em qualquer ponto do gráfico move o slider 3D para aquele instante
+  if (typeof container.removeAllListeners === 'function') {
+    container.removeAllListeners('plotly_click');
+  }
+  if (typeof container.on === 'function') {
+    container.on('plotly_click', (eventData) => {
+      const pt = eventData?.points?.[0];
+      if (pt && typeof pt.pointIndex === 'number') {
+        window.dispatchEvent(new CustomEvent('lunar:seek-step', { detail: pt.pointIndex }));
+      }
+    });
+  }
 }
 
 /**
@@ -147,6 +182,7 @@ export function renderSkyplotPolar(simData, containerId = 'chart-sky') {
 
   const horizon = simData.horizon_profile || [];
   const timeline = simData.timeline;
+  const f0 = timeline[0] || { sun_azimuth_deg: 0, sun_elevation_deg: 0, earth_azimuth_deg: 0, earth_elevation_deg: 0 };
 
   const azFwd = horizon.map((h) => h.azimuth_deg);
   const elFwd = horizon.map((h) => Math.max(0, h.elevation_deg));
@@ -199,6 +235,22 @@ export function renderSkyplotPolar(simData, containerId = 'chart-sky') {
     hovertemplate: 'Azimuth: %{theta:.1f}°<br>Earth Elev: %{r:.2f}°<extra>Earth DTE</extra>',
   };
 
+  // Cursores ativos (posição instantânea do Sol e da Terra sincronizada com o 3D)
+  const activeNowTrace = {
+    type: 'scatterpolar',
+    mode: 'markers',
+    name: '🎯 Active Step (Now)',
+    theta: [f0.sun_azimuth_deg, f0.earth_azimuth_deg],
+    r: [Math.max(0, f0.sun_elevation_deg), Math.max(0, f0.earth_elevation_deg)],
+    marker: {
+      size: [13, 13],
+      color: ['#fde047', '#38bdf8'],
+      symbol: ['circle', 'diamond'],
+      line: { color: '#ffffff', width: 2.5 },
+    },
+    hoverinfo: 'skip',
+  };
+
   const maxBodyEl = Math.max(
     18,
     ...sunLit.map((p) => p.sun_elevation_deg || 0),
@@ -233,12 +285,50 @@ export function renderSkyplotPolar(simData, containerId = 'chart-sky') {
     },
   };
 
-  Plotly.react(
-    container,
-    [horizonMaskTrace, sunBlockedTrace, sunLitTrace, earthTrace],
-    layout,
-    { responsive: true, displaylogo: false }
-  );
+  const traces = [horizonMaskTrace, sunBlockedTrace, sunLitTrace, earthTrace, activeNowTrace];
+  chartState.skyTraceCount = traces.length;
+
+  Plotly.react(container, traces, layout, { responsive: true, displaylogo: false });
+}
+
+/**
+ * Atualiza a linha de tempo e o cursor polar em tempo real quando o slider 3D muda
+ */
+export function updateChartsCursor(stepIdx = 0) {
+  if (!window.Plotly || !chartState.simData?.timeline) return;
+  const Plotly = window.Plotly;
+  const timeline = chartState.simData.timeline;
+  const frame = timeline[Math.min(Math.max(0, stepIdx), timeline.length - 1)];
+  if (!frame) return;
+
+  const elevContainer = document.getElementById('chart-elevation');
+  if (elevContainer && elevContainer.data) {
+    const cursorShape = {
+      type: 'line',
+      xref: 'x',
+      yref: 'paper',
+      x0: frame.timestamp,
+      x1: frame.timestamp,
+      y0: 0,
+      y1: 1,
+      line: { color: THEME.cursorLine, width: 2, dash: 'solid' },
+    };
+    Plotly.relayout(elevContainer, {
+      shapes: [...chartState.baseShapes, cursorShape],
+    });
+  }
+
+  const skyContainer = document.getElementById('chart-sky');
+  if (skyContainer && skyContainer.data && chartState.skyTraceCount > 0) {
+    Plotly.restyle(
+      skyContainer,
+      {
+        theta: [[frame.sun_azimuth_deg, frame.earth_azimuth_deg]],
+        r: [[Math.max(0, frame.sun_elevation_deg), Math.max(0, frame.earth_elevation_deg)]],
+      },
+      [chartState.skyTraceCount - 1]
+    );
+  }
 }
 
 /**
