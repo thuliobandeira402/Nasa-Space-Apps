@@ -79,6 +79,22 @@ export function updateSimulationUI(simData, source = 'online') {
   setText('m-earth-frac', `${simData.earth_fraction_pct}%`);
   setText('m-dark', `${simData.max_continuous_night_hours} h`);
 
+  const m = simData.metricas_resumo;
+  if (m) {
+    setText(
+      'm-sun-power',
+      `Vertical array: ${m.potencia_media_painel_vertical_pct}% · Horiz: ${m.potencia_media_painel_horizontal_pct}%`
+    );
+    setText(
+      'm-earth-lat',
+      `Round-trip latency: ${m.latencia_ida_volta_seg}s (DTE)`
+    );
+    setText(
+      'm-dark-sub',
+      `Terrain shadow loss: -${m.perda_sombra_topografica_pct}% vs. flat horizon`
+    );
+  }
+
   const terrainLabel = simData.modo_terreno || 'NASA LOLA LDEM (Real Data)';
   ['terrain-badge', 'model-badge', 'modo-terreno'].forEach((id) => {
     const el = document.getElementById(id);
