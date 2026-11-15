@@ -622,7 +622,8 @@ function buildHorizonRidgeMesh(horizonProfile = [], radius = 24, baseY = -2.5) {
   const wallMat = new THREE.MeshBasicMaterial({
     vertexColors: true,
     transparent: true,
-    opacity: 0.55,
+    opacity: 0.96,
+    depthWrite: true,
     side: THREE.DoubleSide,
   });
   const wallMesh = new THREE.Mesh(wallGeo, wallMat);
@@ -1633,13 +1634,22 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       }
     } else {
       const discFrac = solarDiscIlluminatedFraction(sunElev, maskElev);
-      const lightEl = Math.max(2.2, sunElev + 2.0);
+      const lightEl = Math.max(0.4, sunElev);
       const sunLightPos = refs.landerTopPos.clone().add(azElToVector3(sunAz, lightEl, 42));
 
       refs.sunLightTargetPos.copy(sunLightPos);
-      refs.targetSunIntensity = 0.18 + 3.8 * discFrac;
-      refs.targetHemiIntensity = 0.12 + 0.18 * discFrac;
-      refs.targetLanderLightIntensity = 1.8 * (1 - discFrac) + 0.25;
+      refs.targetSunIntensity = 0.14 + 3.85 * discFrac;
+      refs.targetHemiIntensity = 0.10 + 0.18 * discFrac;
+      refs.targetLanderLightIntensity = 1.85 * (1 - discFrac) + 0.2;
+
+      if (refs.sunMesh && refs.sunMesh.children) {
+        if (refs.sunMesh.children[1]?.material) {
+          refs.sunMesh.children[1].material.opacity = 0.25 + 0.75 * discFrac;
+        }
+        if (refs.sunMesh.children[2]?.material) {
+          refs.sunMesh.children[2].material.opacity = 0.15 + 0.85 * discFrac;
+        }
+      }
 
       // Elevações verdadeiras (não distorcidas pelo exagero vertical do solo)
       const sunVisualPos = refs.landerTopPos.clone().add(azElToVector3(sunAz, sunElev, 34));
