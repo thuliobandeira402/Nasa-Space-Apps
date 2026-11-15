@@ -8,9 +8,9 @@
 
   <script>
     window.LUNAR_API_CONFIG = {
-      BASE_URL: window.location.port && window.location.port !== '8000'
-        ? 'http://127.0.0.1:8000'
-        : '',
+      BASE_URL: ['localhost', '127.0.0.1'].includes(window.location.hostname) && window.location.port !== '8000'
+      ? 'http://127.0.0.1:8000'
+      : '',
       ENDPOINTS: {
         SITES: '/api/sites',
         FASES: '/api/fases',
@@ -214,7 +214,7 @@
                 </div>
                 <div class="only-engineer">
                   <label for="step">Step (min)</label>
-                  <input id="step" name="step" type="number" min="60" max="1440" step="60" value="60">
+                  <input id="step" name="step" type="number" min="60" max="360" step="60" value="60">
                 </div>
               </div>
 
