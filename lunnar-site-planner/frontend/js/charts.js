@@ -4,16 +4,16 @@
 
 const THEME = {
   paper: 'rgba(0,0,0,0)',
-  plot: 'rgba(15, 23, 42, 0.55)',
-  grid: 'rgba(148, 163, 184, 0.18)',
-  text: '#e2e8f0',
-  muted: '#94a3b8',
-  sunLit: '#fbbf24',
-  sunShadow: '#64748b',
-  earth: '#38bdf8',
-  horizonFill: 'rgba(71, 85, 105, 0.55)',
-  horizonLine: '#94a3b8',
-  overlap: 'rgba(16, 185, 129, 0.16)',
+  plot: 'rgba(0,0,0,0)',
+  grid: 'rgba(255, 255, 255, 0.10)',
+  text: '#ffffff',
+  muted: '#8d8d91',
+  sunLit: '#ffd24a',
+  sunShadow: '#666668',
+  earth: '#7fb4ff',
+  horizonFill: 'rgba(102, 102, 104, 0.45)',
+  horizonLine: '#8d8d91',
+  overlap: 'rgba(61, 220, 151, 0.14)',
 };
 
 function getPlotly() {
@@ -46,7 +46,7 @@ export function renderElevationTimeline(simData, containerId = 'chart-elevation'
       x1: 1,
       y0: 0,
       y1: 0,
-      line: { color: '#ef4444', width: 1.1, dash: 'dot' },
+      line: { color: '#fc3d21', width: 1.1, dash: 'dot' },
     },
   ];
 
@@ -80,7 +80,7 @@ export function renderElevationTimeline(simData, containerId = 'chart-elevation'
       y: ySun,
       line: { color: THEME.sunLit, width: 2.3 },
       fill: 'tozeroy',
-      fillcolor: 'rgba(251, 191, 36, 0.12)',
+      fillcolor: 'rgba(255, 210, 74, 0.12)',
       hovertemplate: '%{x}<br>Sun: <b>%{y:.2f}°</b><extra></extra>',
     },
     {
@@ -114,11 +114,11 @@ export function renderElevationTimeline(simData, containerId = 'chart-elevation'
     xaxis: {
       type: 'date',
       gridcolor: THEME.grid,
-      rangeslider: { visible: true, bgcolor: 'rgba(30, 41, 59, 0.6)' },
+      rangeslider: { visible: true, bgcolor: 'rgba(255, 255, 255, 0.06)' },
       rangeselector: {
-        bgcolor: '#1e293b',
-        activecolor: '#0284c7',
-        font: { color: '#f8fafc', size: 11 },
+        bgcolor: '#0e0e0e',
+        activecolor: '#666668',
+        font: { color: '#ffffff', size: 11 },
         buttons: [
           { count: 3, label: '3d', step: 'day', stepmode: 'backward' },
           { count: 7, label: '7d', step: 'day', stepmode: 'backward' },
