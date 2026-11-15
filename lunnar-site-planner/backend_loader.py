@@ -36,10 +36,10 @@ def _venv_python() -> Path:
 def ensure_venv_and_deps() -> Path:
     vpy = _venv_python()
     if not vpy.exists():
-        print("[1/4] Criando ambiente virtual (.venv)...")
+        print("[1/4] Creating virtual environment (.venv)...")
         subprocess.check_call([sys.executable, "-m", "venv", str(VENV_DIR)])
 
-    print("[2/4] Verificando dependencias Python...")
+    print("[2/4] Verifying Python dependencies...")
     subprocess.check_call([str(vpy), "-m", "pip", "install", "--upgrade", "pip", "-q"])
     if REQ_FILE.exists():
         subprocess.check_call([str(vpy), "-m", "pip", "install", "-r", str(REQ_FILE), "-q"])
@@ -62,7 +62,7 @@ def _download_if_missing(dest: Path, url: str) -> None:
 
 
 def ensure_nasa_datasets() -> None:
-    print("[3/4] Verificando kernels SPICE e DEM LRO/LOLA...")
+    print("[3/4] Verifying SPICE and DEM LRO/LOL...")
     KERNELS_DIR.mkdir(parents=True, exist_ok=True)
     LOLA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -85,14 +85,14 @@ def find_free_port(preferred: int = 8000) -> int:
 
 def main() -> None:
     if not BACKEND_DIR.exists():
-        raise FileNotFoundError(f"Pasta 'backend' nao encontrada em {ROOT_DIR}")
+        raise FileNotFoundError(f"File called backend not found in {ROOT_DIR}")
 
     vpy = ensure_venv_and_deps()
     ensure_nasa_datasets()
 
     port = find_free_port(8000)
     url = f"http://127.0.0.1:{port}"
-    print(f"[4/4] Iniciando Lunar Site Planner em {url} (Ctrl+C para encerrar)...")
+    print(f"[4/4] Starting Lunar Site Planner at {url} (Ctrl+C to stop)...")
 
     proc = subprocess.Popen(
         [
@@ -111,7 +111,7 @@ def main() -> None:
     try:
         proc.wait()
     except KeyboardInterrupt:
-        print("\nEncerrando servidor...")
+        print("\nShutting down servidor...")
         proc.terminate()
         proc.wait()
 
