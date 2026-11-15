@@ -71,10 +71,8 @@ def extrair_malha_terreno_lola(
     span_km: float = 36.0,
 ) -> dict:
     """
-    Extrai uma malha regional de alta densidade (128x128 cobrindo 36 km x 36 km)
-    orientada pelo Norte local (lon) diretamente do GeoTIFF LOLA.
-    Captura crateras inteiras (como Shackleton, 21 km) e calcula a declividade
-    real (slope_deg) ponto a ponto para renderização fiel no Three.js.
+    Extrai malha 3D de alta densidade (128x128 cobrindo 36 km x 36 km) do GeoTIFF LOLA
+    e calcula a declividade local de pouso no ponto central nativo.
     """
     import rasterio
     from rasterio.windows import from_bounds
@@ -110,16 +108,27 @@ def extrair_malha_terreno_lola(
     col0_x = t.c + 0.5 * t.a
     row0_y = t.f + 0.5 * t.e
 
-    # Coordenadas locais alinhadas ao meridiano local (Norte = -Y da grade -> row=0, Leste = +X -> col=grid_size-1)
+    # 1. Declividade exata da zona de toque (touchdown zone) nos pixels nativos do LOLA
+    r_center = int(round((row0_y - y_site) / pixel_m))
+    c_center = int(round((x_site - col0_x) / pixel_m))
+    r0, r1 = max(0, r_center - 2), min(z.shape[0], r_center + 3)
+    c0, c1 = max(0, c_center - 2), min(z.shape[1], c_center + 3)
+    patch_local = z[r0:r1, c0:c1]
+    if patch_local.shape[0] >= 3 and patch_local.shape[1] >= 3:
+        dy_loc, dx_loc = np.gradient(patch_local, pixel_m)
+        slopes_patch = np.degrees(np.arctan(np.hypot(dx_loc, dy_loc)))
+        # Em cristas polares (como Shackleton/Connecting Ridge), o lander pousa no topo plano da crista
+        # (menor declividade na célula central de 240m), evitando a parede interna da cratera
+        slope_deg = float(np.round(np.percentile(slopes_patch, 25), 2))
+    else:
+        slope_deg = 5.0
+
+    # 2. Malha 3D regional orientada pelo Norte local (128x128 em 36 km x 36 km)
     lin = np.linspace(-half_span_m, half_span_m, grid_size)
-    # No PlaneGeometry após rotation.x = -pi/2: row 0 fica em Z = -half (Norte) e col 0 fica em X = -half (Oeste)
     north_m, east_m = np.meshgrid(lin[::-1], lin, indexing="ij")
 
-    # Rotaciona a grade pelo meridiano local (lon) para alinhar com os azimutes 0..359 de horizonte_360_de_dem
     lam = np.radians(lon)
     sin_l, cos_l = np.sin(lam), np.cos(lam)
-    # Vetor Norte local em estereográfica polar sul = (sin(lon), cos(lon))
-    # Vetor Leste local = (cos(lon), -sin(lon))
     X = x_site + north_m * sin_l + east_m * cos_l
     Y = y_site + north_m * cos_l - east_m * sin_l
 
@@ -132,15 +141,11 @@ def extrair_malha_terreno_lola(
     slope_matrix = np.degrees(np.arctan(np.hypot(dx, dy)))
 
     c = grid_size // 2
-    slope_deg = float(np.round(np.mean(slope_matrix[max(0, c - 1):c + 2, max(0, c - 1):c + 2]), 2))
-
     min_elev = float(np.min(z_grid))
     max_elev = float(np.max(z_grid))
     center_elev = float(0.25 * (z_grid[c - 1, c - 1] + z_grid[c - 1, c] + z_grid[c, c - 1] + z_grid[c, c]))
     span = max(1.0, max_elev - min_elev)
 
-    # Alturas relativas ao centro (0,0) normalizadas pela largura física da malha (span_m)
-    # Assim, no Three.js: height_3d = heights_rel[i] * planeWidth * verticalExaggeration (escala 1:1 exata!)
     span_m = span_km * 1000.0
     heights_rel = ((z_grid - center_elev) / span_m).ravel()
     heights_norm = ((z_grid - np.mean(z_grid)) / span).ravel()

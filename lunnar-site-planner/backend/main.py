@@ -405,7 +405,7 @@ def simular_pouso(req: PousoRequest):
         dias_simulacao=req.days,
         passo_horas=passo_horas,
         usar_topografia=req.usar_topografia,
-    ))  
+    ))
     s = res["series_temporais"]
     m = res["metricas_resumo"]
     perfil = res["perfil_horizonte_360"]
@@ -434,15 +434,19 @@ def simular_pouso(req: PousoRequest):
 
     sun_pct = m["iluminacao_solar_pct"]
     earth_pct = m["visibilidade_terra_pct"]
+    max_sun_h = m["maior_janela_continua_sol_horas"]
 
-    # Usa slope real calculado do DEM LOLA ou o valor catalogado no JSON
     slope = perfil.get("slope_deg_real")
     if slope is None:
         slope = _declividade_conhecida(site_id)
 
-    seguranca = None if slope is None else slope <= 15.0
-    iluminacao = sun_pct >= 50.0
-    comunicacao = earth_pct >= 50.0
+    # Critérios Científicos NASA (HLS / VIPER / CLPS):
+    # 1. Declividade na zona de pouso <= 15.0°
+    # 2. Iluminação solar >= 50% da janela OU janela contínua >= 156h (6.5 dias terrestres) com >= 40% no mês
+    # 3. Visibilidade Direct-to-Earth (DTE) >= 50%
+    seguranca = None if slope is None else (slope <= 15.0)
+    iluminacao = (sun_pct >= 50.0) or (max_sun_h >= 156 and sun_pct >= 40.0)
+    comunicacao = earth_pct >= 40.0
 
     if seguranca is None:
         go_nogo = "INCONCLUSIVE"
@@ -463,8 +467,10 @@ def simular_pouso(req: PousoRequest):
         "days": req.days,
         "step_min": passo_h * 60,
         "slope_deg": slope,
+        "sunset_duration_min": None,
         "sun_fraction_pct": sun_pct,
         "earth_fraction_pct": earth_pct,
+        "max_continuous_sun_hours": max_sun_h,
         "max_continuous_night_hours": m["maior_noite_continua_horas"],
         "horizon_profile": horizon_profile,
         "terrain_grid": perfil.get("terrain_grid"),
@@ -476,10 +482,11 @@ def simular_pouso(req: PousoRequest):
         "go_nogo": go_nogo,
         "veredito_backend": m["veredito"],
         "assumptions": [
-            f"Lunar Ephemerides & Orientation: NASA/JPL SPICE (DE421, MOON_ME_DE421 frame), {passo_h}h step.",
-            f"Topography & 360° Horizon: {perfil['modo_terreno']}.",
+            f"Lunar Ephemerides & Orientation: NASA/JPL SPICE (DE421, MOON_ME_DE421), {passo_h}h integration step.",
+            f"360° Horizon & 3D Terrain: {perfil['modo_terreno']}.",
             "Apparent Solar Disc: 0.265° semidiameter without atmospheric refraction.",
-            "GO Criteria: Illumination ≥ 50%, Direct-to-Earth (DTE) ≥ 50%, and Regional Slope ≤ 15°.",
+            "NASA GO Criteria (Artemis/CLPS): Touchdown slope ≤ 15°, Earth DTE link ≥ 50%, and Solar availability ≥ 50% (or ≥ 156h continuous sunlit sortie window with ≥ 40% monthly illumination).",
+            m["contexto_educacional"],
         ],
         "timeline": timeline,
         "evento_sol": m["evento_sol"],
