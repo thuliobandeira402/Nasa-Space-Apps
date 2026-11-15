@@ -87,6 +87,60 @@ def _normalizar_efemerides(dados_brutos: list | dict, passo_horas: int) -> dict:
         "distancia_terra_km": [item.get("earth_distance_km", 384400.0) for item in dados_brutos],
     }
 
+# Adicione no topo do backend/main.py:
+import io
+import rasterio
+from rasterio.enums import Resampling
+from fastapi.responses import Response
+
+
+@app.get("/api/lola-polar-map")
+def obter_mapa_polar_lola():
+    """
+    Gera uma imagem PNG real (512x512) de relevo sombreado (hillshade) diretamente
+    do GeoTIFF NASA LOLA do Polo Sul (-80°S a -90°S) para texturizar o Globo 3D.
+    """
+    if not LOLA_DEM_PATH.exists():
+        raise HTTPException(status_code=404, detail="Arquivo LOLA DEM não encontrado.")
+
+    size = 512
+    with rasterio.open(LOLA_DEM_PATH) as src:
+        z = src.read(1, out_shape=(size, size), resampling=Resampling.bilinear).astype("float64")
+        if src.nodata is not None:
+            z[z == src.nodata] = np.nan
+        scale = float(src.scales[0]) if src.scales else 1.0
+        offset = float(src.offsets[0]) if src.offsets else 0.0
+        z = z * scale + offset
+
+    med = float(np.nanmean(z))
+    z = np.where(np.isnan(z), med, z)
+
+    # Hillshade topográfico real para destacar crateras (Shackleton, Cabeus, de Gerlache)
+    dy, dx = np.gradient(z, 240.0)
+    slope = np.pi / 2.0 - np.arctan(np.hypot(dx, dy))
+    aspect = np.arctan2(-dx, dy)
+    az_rad = np.radians(315.0)
+    alt_rad = np.radians(35.0)
+    shaded = np.sin(alt_rad) * np.sin(slope) + np.cos(alt_rad) * np.cos(slope) * np.cos(az_rad - aspect)
+    shaded = np.clip((shaded + 1.0) * 0.5, 0.0, 1.0)
+
+    # Combina altimetria normalizada + sombreamento topográfico
+    z_norm = (z - np.min(z)) / max(1.0, float(np.max(z) - np.min(z)))
+    img_gray = np.clip((0.45 * z_norm + 0.55 * shaded) * 235 + 20, 0, 255).astype(np.uint8)
+
+    # Codifica PNG puro sem dependências extras usando zlib + struct
+    import struct
+    import zlib
+
+    raw_rows = b"".join(b"\x00" + img_gray[r].tobytes() for r in range(size))
+    compressed = zlib.compress(raw_rows, level=6)
+
+    def _chunk(tag: bytes, data: bytes) -> bytes:
+        return struct.pack("!I", len(data)) + tag + data + struct.pack("!I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+    ihdr = struct.pack("!IIBBBBB", size, size, 8, 0, 0, 0, 0)
+    png_bytes = b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", compressed) + _chunk(b"IEND", b"")
+    return Response(content=png_bytes, media_type="image/png")
 
 @app.get("/api/sites")
 def listar_locais_predefinidos():
@@ -389,43 +443,49 @@ def simular_pouso(req: PousoRequest):
     seguranca = None if slope is None else slope <= 15.0
     iluminacao = sun_pct >= 50.0
     comunicacao = earth_pct >= 50.0
-    go = iluminacao and comunicacao and seguranca is not False
+
+    if seguranca is None:
+        go_nogo = "INCONCLUSIVE"
+    elif iluminacao and comunicacao and seguranca:
+        go_nogo = "GO"
+    else:
+        go_nogo = "NO-GO"
 
     return {
         "site_id": site_id,
         "site_name": nome,
         "lat": req.lat,
         "lon": req.lon,
+        "data_quality": perfil.get("data_quality", "lola"),
+        "resolution_m": perfil.get("resolution_m"),
+        "modo_terreno": perfil.get("modo_terreno"),
         "start_date": res["configuracao"]["data_inicio"],
         "days": req.days,
         "step_min": passo_h * 60,
         "slope_deg": slope,
-        "sunset_duration_min": None,
         "sun_fraction_pct": sun_pct,
         "earth_fraction_pct": earth_pct,
         "max_continuous_night_hours": m["maior_noite_continua_horas"],
         "horizon_profile": horizon_profile,
-        "terrain_grid": perfil.get("terrain_grid"),  # Malha 3D real para o Three.js
+        "terrain_grid": perfil.get("terrain_grid"),
         "criterios": {
             "seguranca_topografica": seguranca,
             "iluminacao_solar": iluminacao,
             "comunicacao_direta": comunicacao,
         },
-        "go_nogo": "GO" if go else "NO-GO",
+        "go_nogo": go_nogo,
         "veredito_backend": m["veredito"],
         "assumptions": [
-            f"Efemérides lunares e orientação da Lua: NASA/JPL SPICE (DE421), passo de {passo_h} h.",
-            f"Horizonte 360° e terreno 3D: {perfil['modo_terreno']}.",
-            "Disco solar com semidiâmetro de 0,265°, sem refração atmosférica.",
-            "Critério GO: iluminação ≥ 50%, visada da Terra ≥ 50% e declividade ≤ 15° (quando houver dado).",
-            m["contexto_educacional"],
+            f"Lunar Ephemerides & Orientation: NASA/JPL SPICE (DE421, MOON_ME_DE421 frame), {passo_h}h step.",
+            f"Topography & 360° Horizon: {perfil['modo_terreno']}.",
+            "Apparent Solar Disc: 0.265° semidiameter without atmospheric refraction.",
+            "GO Criteria: Illumination ≥ 50%, Direct-to-Earth (DTE) ≥ 50%, and Regional Slope ≤ 15°.",
         ],
         "timeline": timeline,
         "evento_sol": m["evento_sol"],
         "evento_terra": m["evento_terra"],
         "metricas_resumo": m,
     }
-
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 if FRONTEND_DIR.exists():
