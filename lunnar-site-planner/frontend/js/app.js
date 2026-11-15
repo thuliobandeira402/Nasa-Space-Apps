@@ -60,6 +60,18 @@ function solarDiscIlluminatedFraction(sunElevDeg, maskElevDeg) {
   return 0.5 + (u * Math.sqrt(1 - u * u) + Math.asin(u)) / Math.PI;
 }
 
+function getHorizonMaskAtAzimuth(horizonProfile = [], azDeg = 0) {
+  if (!Array.isArray(horizonProfile) || horizonProfile.length === 0) return 0;
+  const norm = ((azDeg % 360) + 360) % 360;
+  const exactIdx = (norm / 360) * (horizonProfile.length - 1);
+  const i0 = Math.floor(exactIdx);
+  const i1 = Math.min(horizonProfile.length - 1, i0 + 1);
+  const frac = exactIdx - i0;
+  const e0 = horizonProfile[i0]?.elevation_deg ?? 0;
+  const e1 = horizonProfile[i1]?.elevation_deg ?? 0;
+  return e0 * (1 - frac) + e1 * frac;
+}
+
 function translatePhaseName(rawName) {
   if (!rawName) return 'JPL DE421 Ephemerides · LRO/LOLA';
   return rawName
@@ -89,30 +101,59 @@ function createGlowTexture(rgbaCenter = 'rgba(255, 252, 235, 1)', rgbaMid = 'rgb
   return new THREE.CanvasTexture(canvas);
 }
 
-function createLabelSprite(text, colorHex = '#ffffff', bgRgba = 'rgba(6, 10, 24, 0.85)', scaleWidth = 4.2) {
+/**
+ * Cria rótulo 3D de alta definição com tamanho fixo na tela (sizeAttenuation: false),
+ * garantindo leitura cristalina de qualquer distância ou nível de zoom.
+ */
+function createLabelSprite(text, colorHex = '#ffffff', bgRgba = 'rgba(6, 10, 24, 0.92)', screenHeight = 0.068) {
   const canvas = document.createElement('canvas');
-  canvas.width = 320;
-  canvas.height = 64;
   const ctx = canvas.getContext('2d');
+  const fontStr = '800 44px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+  ctx.font = fontStr;
 
+  const textWidth = Math.ceil(ctx.measureText(text).width);
+  const padX = 48;
+  const width = Math.max(220, textWidth + padX * 2);
+  const height = 96;
+
+  canvas.width = width;
+  canvas.height = height;
+
+  ctx.font = fontStr;
   ctx.fillStyle = bgRgba;
   ctx.strokeStyle = colorHex;
-  ctx.lineWidth = 3;
+  ctx.lineWidth = 5;
+
   ctx.beginPath();
-  ctx.roundRect(6, 8, 308, 48, 12);
+  ctx.roundRect(6, 6, width - 12, height - 12, 22);
   ctx.fill();
   ctx.stroke();
 
-  ctx.fillStyle = colorHex;
-  ctx.font = 'bold 22px system-ui, sans-serif';
+  // Sombra interna suave para máximo contraste de leitura
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+  ctx.shadowBlur = 6;
+  ctx.fillStyle = '#ffffff';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(text, 160, 33);
+  ctx.fillText(text, width / 2, height / 2 + 2);
 
   const tex = new THREE.CanvasTexture(canvas);
-  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+
+  const mat = new THREE.SpriteMaterial({
+    map: tex,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    sizeAttenuation: false, // Mantém o tamanho legível constante em qualquer distância!
+  });
+
   const sprite = new THREE.Sprite(mat);
-  sprite.scale.set(scaleWidth, 1.0, 1);
+  const aspect = width / height;
+  sprite.scale.set(screenHeight * aspect, screenHeight, 1);
+  sprite.renderOrder = 999;
   return sprite;
 }
 
@@ -173,7 +214,6 @@ function computeTerrainVertexColors(grid, posCount, colorMode = 'natural') {
         tmpColor.lerpColors(cSlopeWarn, cSlopeDanger, tS);
       }
     } else {
-      // Modo Natural (Regolito Lunar Fotorrealista estilo LRO)
       if (tElev < 0.5) {
         tmpColor.lerpColors(cRegolithDark, cRegolithMid, tElev * 2.0);
       } else {
@@ -267,6 +307,7 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
   const [isPlaying, setIsPlaying] = useState(false);
 
   const canvasWrapRef = useRef(null);
+  const raycasterRef = useRef(new THREE.Raycaster());
   const sceneObjectsRef = useRef({
     viewMode: 'superficie',
     terrainGeo: null,
@@ -278,12 +319,12 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
     sunMesh: null,
     sunRayLine: null,
     sunRayMat: null,
-    sunBlockBadge: null,
     earthGroup: null,
     commBeamGroup: null,
     commPulses: [],
     commLineMat: null,
     commLine: null,
+    commBlockGroup: null,
     globePin: null,
     globePinPos: new THREE.Vector3(0, -2.24, 0),
     landerBody: null,
@@ -295,6 +336,7 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
     landerTopPos: new THREE.Vector3(0, 0.72, 0),
     earthTargetPos: new THREE.Vector3(0, 8, -28),
     earthCurrentPos: new THREE.Vector3(0, 8, -28),
+    commBeamEndPos: new THREE.Vector3(0, 8, -28),
     sunVisualTargetPos: new THREE.Vector3(20, 5, 20),
     sunLightTargetPos: new THREE.Vector3(20, -10, 20),
     sunRayEndTargetPos: new THREE.Vector3(20, 5, 20),
@@ -359,8 +401,9 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
     }
     pos.needsUpdate = true;
     terrainGeo.computeVertexNormals();
+    terrainGeo.computeBoundingBox();
+    terrainGeo.computeBoundingSphere();
 
-    // Calcula altura e inclinação real no centro exato (0,0) para posicionar e inclinar o lander no relevo
     const c = Math.floor(gridSize / 2);
     const getZ = (r, col) => pos.getZ(Math.min(gridSize - 1, Math.max(0, r)) * gridSize + Math.min(gridSize - 1, Math.max(0, col)));
     const centerZ = 0.25 * (getZ(c - 1, c - 1) + getZ(c - 1, c) + getZ(c, c - 1) + getZ(c, c));
@@ -410,7 +453,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
     controls.maxDistance = 90;
     controls.minDistance = 1.8;
 
-    // Luz ambiente baixa estilo vácuo lunar para destacar sombras profundas nas crateras (como na imagem 2)
     const hemiLight = new THREE.HemisphereLight(0xdbeafe, 0x090d16, 0.16);
     scene.add(hemiLight);
 
@@ -442,12 +484,12 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       sunMesh: null,
       sunRayLine: null,
       sunRayMat: null,
-      sunBlockBadge: null,
       earthGroup: null,
       commBeamGroup: null,
       commPulses: [],
       commLineMat: null,
       commLine: null,
+      commBlockGroup: null,
       globePin: null,
       globePinPos: new THREE.Vector3(0, -2.24, 0),
       landerBody: null,
@@ -459,6 +501,7 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       landerTopPos: new THREE.Vector3(0, 0.72, 0),
       earthTargetPos: new THREE.Vector3(0, 8, -28),
       earthCurrentPos: new THREE.Vector3(0, 8, -28),
+      commBeamEndPos: new THREE.Vector3(0, 8, -28),
       sunVisualTargetPos: new THREE.Vector3(20, 5, 20),
       sunLightTargetPos: new THREE.Vector3(25, -10, 20),
       sunRayEndTargetPos: new THREE.Vector3(20, 5, 20),
@@ -498,14 +541,21 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
           side: THREE.BackSide,
         })
       );
-      earthGroup.add(earthMesh, atmoMesh);
+      const earthLabel = createLabelSprite('🌍 EARTH', '#38bdf8', 'rgba(6, 10, 24, 0.92)', 0.068);
+      earthLabel.position.set(0, 1.75, 0);
+      earthGroup.add(earthMesh, atmoMesh, earthLabel);
 
+      const moonGroup = new THREE.Group();
+      moonGroup.position.set(mPos.x, mPos.y, mPos.z);
       const moon = new THREE.Mesh(
         new THREE.SphereGeometry(0.46, 32, 32),
         new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.92 })
       );
-      moon.position.set(mPos.x, mPos.y, mPos.z);
-      scene.add(earthGroup, moon);
+      const moonLabel = createLabelSprite('☾ MOON', '#cbd5e1', 'rgba(6, 10, 24, 0.92)', 0.065);
+      moonLabel.position.set(0, 1.0, 0);
+      moonGroup.add(moon, moonLabel);
+
+      scene.add(earthGroup, moonGroup);
 
       const pts = (viagemData?.tli_trajectory || []).map((p) => new THREE.Vector3(p.x, p.y, p.z));
       refs.tliPoints = pts;
@@ -587,6 +637,7 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       refs.sunLightTargetPos.copy(sunInitPos.clone().multiplyScalar(4.0));
       refs.earthTargetPos.copy(earthInitPos);
       refs.earthCurrentPos.copy(earthInitPos);
+      refs.commBeamEndPos.copy(earthInitPos);
       sunLight.position.copy(refs.sunLightTargetPos);
 
       const sunGroup = new THREE.Group();
@@ -605,9 +656,8 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
         })
       );
       sunSprite.scale.set(3.2, 3.2, 1);
-      const sunLabel = createLabelSprite('☀️ SUN', '#fbbf24', 'rgba(6, 10, 24, 0.85)', 1.8);
-      sunLabel.scale.set(1.6, 0.42, 1);
-      sunLabel.position.set(0, 0.85, 0);
+      const sunLabel = createLabelSprite('☀️ SUN', '#fbbf24', 'rgba(6, 10, 24, 0.92)', 0.068);
+      sunLabel.position.set(0, 1.05, 0);
       sunGroup.add(sunSphere, sunSprite, sunLabel);
       scene.add(sunGroup);
       refs.sunMesh = sunGroup;
@@ -639,9 +689,8 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
           roughness: 0.35,
         })
       );
-      const earthLabel = createLabelSprite('🌍 EARTH', '#38bdf8', 'rgba(6, 10, 24, 0.85)', 1.9);
-      earthLabel.scale.set(1.7, 0.42, 1);
-      earthLabel.position.set(0, 0.8, 0);
+      const earthLabel = createLabelSprite('🌍 EARTH', '#38bdf8', 'rgba(6, 10, 24, 0.92)', 0.068);
+      earthLabel.position.set(0, 0.95, 0);
       earthGroup.add(earthSphere, earthLabel);
       scene.add(earthGroup);
       refs.earthGroup = earthGroup;
@@ -672,7 +721,7 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       refs.commLineMat = commLineMat;
       refs.commLine = commLine;
     } else {
-      // MODO 3: RELEVO REAL DE ALTA DENSIDADE LOLA (CRATERAS REAIS, SOMBRAS TOPOGRÁFICAS E DECLIVIDADE REAL)
+      // MODO 3: RELEVO REAL DE ALTA DENSIDADE LOLA + RÓTULOS SEMPRE LEGÍVEIS + MARCADOR DE COLISÃO NO RELEVO
       const grid = simData?.terrain_grid;
       const gridSize = grid?.size || 128;
       const segments = gridSize - 1;
@@ -697,6 +746,8 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       const initColors = computeTerrainVertexColors(grid, pos.count, colorMode);
       terrainGeo.setAttribute('color', new THREE.BufferAttribute(initColors, 3));
       terrainGeo.computeVertexNormals();
+      terrainGeo.computeBoundingBox();
+      terrainGeo.computeBoundingSphere();
 
       const terrain = new THREE.Mesh(
         terrainGeo,
@@ -714,7 +765,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       refs.terrainGeo = terrainGeo;
       refs.terrainMesh = terrain;
 
-      // Calcula cota e inclinação real no centro exato (0,0) para apoiar o lander na encosta
       const c = Math.floor(gridSize / 2);
       const getZ = (r, col) => pos.getZ(Math.min(gridSize - 1, Math.max(0, r)) * gridSize + Math.min(gridSize - 1, Math.max(0, col)));
       const centerZ = 0.25 * (getZ(c - 1, c - 1) + getZ(c - 1, c) + getZ(c, c - 1) + getZ(c, c));
@@ -748,8 +798,9 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       refs.sunVisualTargetPos.copy(sunInitVisual);
       refs.earthTargetPos.copy(earthInitVisual);
       refs.earthCurrentPos.copy(earthInitVisual);
+      refs.commBeamEndPos.copy(earthInitVisual);
 
-      // Sol no Céu
+      // Sol no Céu + Rótulo "☀️ SUN" nítido em qualquer distância
       const sunGroup = new THREE.Group();
       sunGroup.position.copy(sunInitVisual);
       const sunSphere = new THREE.Mesh(
@@ -766,11 +817,13 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
         })
       );
       sunSprite.scale.set(8.0, 8.0, 1);
-      sunGroup.add(sunSphere, sunSprite);
+      const sunLabel = createLabelSprite('☀️ SUN', '#fbbf24', 'rgba(6, 10, 24, 0.94)', 0.072);
+      sunLabel.position.set(0, 2.7, 0);
+      sunGroup.add(sunSphere, sunSprite, sunLabel);
       scene.add(sunGroup);
       refs.sunMesh = sunGroup;
 
-      // Terra no Céu
+      // Terra no Céu + Rótulo "🌍 EARTH" nítido em qualquer distância
       const earthGroup = new THREE.Group();
       earthGroup.position.copy(earthInitVisual);
       const earthSphere = new THREE.Mesh(
@@ -791,11 +844,13 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
         })
       );
       earthGlow.scale.set(5.2, 5.2, 1);
-      earthGroup.add(earthSphere, earthGlow);
+      const earthLabel = createLabelSprite('🌍 EARTH', '#38bdf8', 'rgba(6, 10, 24, 0.94)', 0.072);
+      earthLabel.position.set(0, 2.5, 0);
+      earthGroup.add(earthSphere, earthGlow, earthLabel);
       scene.add(earthGroup);
       refs.earthGroup = earthGroup;
 
-      // Feixe de Comunicação DTE (Lander <-> Terra)
+      // Feixe de Comunicação DTE (Lander <-> Terra ou até o ponto de colisão na encosta)
       const commBeamGroup = new THREE.Group();
       const commLineMat = new THREE.LineDashedMaterial({
         color: 0x3ddc97,
@@ -825,6 +880,36 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       refs.commPulses = commPulses;
       refs.commLineMat = commLineMat;
       refs.commLine = commLine;
+
+      // Marcador 3D no Ponto de Colisão onde a Declividade/Terreno bloqueia a comunicação com a Terra
+      const commBlockGroup = new THREE.Group();
+      commBlockGroup.visible = false;
+
+      const hitSphere = new THREE.Mesh(
+        new THREE.SphereGeometry(0.22, 16, 16),
+        new THREE.MeshBasicMaterial({ color: 0xff5c7a })
+      );
+      const hitGlow = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: createGlowTexture('rgba(255, 92, 122, 0.95)', 'rgba(239, 68, 68, 0.45)'),
+          transparent: true,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      );
+      hitGlow.scale.set(2.2, 2.2, 1);
+
+      const blockBadge = createLabelSprite(
+        '⛰️ Terrain blocking communication',
+        '#ff5c7a',
+        'rgba(28, 8, 18, 0.95)',
+        0.072
+      );
+      blockBadge.position.set(0, 1.5, 0);
+
+      commBlockGroup.add(hitSphere, hitGlow, blockBadge);
+      scene.add(commBlockGroup);
+      refs.commBlockGroup = commBlockGroup;
     }
 
     sceneObjectsRef.current = refs;
@@ -859,9 +944,46 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       if (r.earthGroup) {
         r.earthCurrentPos.lerp(r.earthTargetPos, 0.14);
         r.earthGroup.position.copy(r.earthCurrentPos);
+
+        const originPt = r.viewMode === 'globo' ? r.globePinPos : r.landerTopPos;
+
+        if (r.viewMode === 'superficie' && !r.earthVisibleNow && r.terrainMesh) {
+          r.terrainMesh.updateMatrixWorld();
+          const dirToEarth = r.earthCurrentPos.clone().sub(originPt).normalize();
+          const raycaster = raycasterRef.current;
+          raycaster.set(originPt, dirToEarth);
+          const hits = raycaster.intersectObject(r.terrainMesh, false);
+
+          if (hits.length > 0 && hits[0].distance > 0.35) {
+            r.commBeamEndPos.copy(hits[0].point);
+          } else {
+            const fallbackDist = 14.5;
+            const ridgePt = originPt.clone().addScaledVector(dirToEarth, fallbackDist);
+            const rayDown = new THREE.Raycaster(
+              new THREE.Vector3(ridgePt.x, 30, ridgePt.z),
+              new THREE.Vector3(0, -1, 0)
+            );
+            const groundHits = rayDown.intersectObject(r.terrainMesh, false);
+            if (groundHits.length > 0) {
+              r.commBeamEndPos.copy(groundHits[0].point);
+            } else {
+              r.commBeamEndPos.copy(ridgePt);
+            }
+          }
+
+          if (r.commBlockGroup) {
+            r.commBlockGroup.position.copy(r.commBeamEndPos);
+            r.commBlockGroup.visible = true;
+          }
+        } else {
+          r.commBeamEndPos.copy(r.earthCurrentPos);
+          if (r.commBlockGroup) {
+            r.commBlockGroup.visible = false;
+          }
+        }
+
         if (r.commLine) {
-          const originPt = r.viewMode === 'globo' ? r.globePinPos : r.landerTopPos;
-          r.commLine.geometry.setFromPoints([originPt, r.earthCurrentPos]);
+          r.commLine.geometry.setFromPoints([originPt, r.commBeamEndPos]);
           r.commLine.computeLineDistances();
         }
       }
@@ -874,8 +996,8 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
           const t = r.earthVisibleNow
             ? ((i / count) + elapsed * 0.28) % 1.0
             : (i + 0.5) / count;
-          pMesh.position.lerpVectors(originPt, r.earthCurrentPos, t);
-          pMesh.scale.setScalar(r.earthVisibleNow ? 1.0 : 0.6);
+          pMesh.position.lerpVectors(originPt, r.commBeamEndPos, t);
+          pMesh.scale.setScalar(r.earthVisibleNow ? 1.0 : 0.65);
         }
       }
 
@@ -914,7 +1036,7 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
     const sunVisible = Boolean(activeFrame.sun_visible);
     const earthVisible = activeFrame.earth_visible !== undefined
       ? Boolean(activeFrame.earth_visible)
-      : earthElev > 0;
+      : earthElev > Math.max(0, getHorizonMaskAtAzimuth(simData?.horizon_profile, earthAz));
     refs.earthVisibleNow = earthVisible;
 
     if (viewMode === 'viagem') {
@@ -958,9 +1080,7 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
         refs.globePin.material.color.setHex(instantColor);
       }
     } else {
-      // MODO 3 (LOCAL SURFACE): Luz rasante física que projeta as sombras reais das crateras LOLA
       const discFrac = solarDiscIlluminatedFraction(sunElev, maskElev);
-      // Luz direcional acompanha a elevação real do Sol para projetar sombras longas dentro da cratera Shackleton
       const lightEl = Math.max(2.2, sunElev + 2.5);
       const sunLightPos = azElToVector3(sunAz, lightEl, 42);
 
@@ -978,7 +1098,7 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       if (refs.commLineMat) {
         const beamColor = earthVisible ? 0x3ddc97 : 0xff5c7a;
         refs.commLineMat.color.setHex(beamColor);
-        refs.commLineMat.opacity = earthVisible ? 0.85 : 0.3;
+        refs.commLineMat.opacity = earthVisible ? 0.85 : 0.75;
         refs.commPulses.forEach((p) => p.material.color.setHex(beamColor));
       }
     }
