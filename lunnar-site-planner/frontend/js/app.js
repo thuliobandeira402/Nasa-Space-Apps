@@ -807,8 +807,10 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
   const [stepIdx, setStepIdx] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playSpeed, setPlaySpeed] = useState(1);          // 1x | 2x | 4x
+  const [isViewMenuOpen, setIsViewMenuOpen] = useState(false);
 
   const viewportWrapRef = useRef(null);
+  const viewMenuRef = useRef(null);
   const canvasWrapRef = useRef(null);
   const raycasterRef = useRef(new THREE.Raycaster());
   const sceneObjectsRef = useRef({
@@ -879,6 +881,18 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
     setStepIdx(0);
     setIsPlaying(false);
   }, [simData]);
+
+  // Fecha o menu pílula de Color & Camera ao clicar fora dele
+  useEffect(() => {
+    if (!isViewMenuOpen) return;
+    const handleClickOutside = (e) => {
+      if (viewMenuRef.current && !viewMenuRef.current.contains(e.target)) {
+        setIsViewMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isViewMenuOpen]);
 
   // Escuta cliques vindos do gráfico Plotly para saltar diretamente para aquele horário no 3D
   useEffect(() => {
@@ -1849,60 +1863,96 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       simData?.terrain_grid &&
       html`
         <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-300 py-1">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-1.5">
-              <span>Color:</span>
-              <button
-                type="button"
-                className=${`btn small ${colorMode === 'natural' ? 'primary' : ''}`}
-                onClick=${() => setColorMode('natural')}
-              >
-                Natural
-              </button>
-              <button
-                type="button"
-                className=${`btn small ${colorMode === 'elevation' ? 'primary' : ''}`}
-                onClick=${() => setColorMode('elevation')}
-              >
-                Elevation
-              </button>
-              <button
-                type="button"
-                className=${`btn small ${colorMode === 'slope' ? 'primary' : ''}`}
-                onClick=${() => setColorMode('slope')}
-              >
-                Slope
-              </button>
-            </div>
+          <div ref=${viewMenuRef} className="relative">
+            <button
+              type="button"
+              className=${`btn small flex items-center gap-2 ${isViewMenuOpen ? 'primary' : ''}`}
+              onClick=${() => setIsViewMenuOpen((prev) => !prev)}
+              aria-expanded=${isViewMenuOpen}
+            >
+              <span>🎨 Color & Camera</span>
+              <span className="text-[10px]">${isViewMenuOpen ? '▲' : '▼'}</span>
+            </button>
 
-            <div className="flex items-center gap-2">
-              <label htmlFor="vert-exag-slider" className="whitespace-nowrap">
-                Terrain Relief Scale <strong>${vertExag.toFixed(1)}x</strong>
-              </label>
-              <input
-                id="vert-exag-slider"
-                type="range"
-                min="1"
-                max="4"
-                step="0.25"
-                value=${vertExag}
-                onChange=${(e) => setVertExag(Number(e.target.value))}
-                style=${{ width: '95px' }}
-              />
-            </div>
+            ${isViewMenuOpen &&
+            html`
+              <div
+                className="absolute left-0 top-full mt-2 z-30 w-56 rounded-[28px] bg-[#060606]/95 backdrop-blur-md p-3.5 shadow-2xl flex flex-col gap-3"
+                style=${{ border: '3px solid #666668' }}
+              >
+                <div className="flex flex-col gap-1.5">
+                  <span className="px-2 text-[10px] font-bold uppercase tracking-wider text-[#8d8d91]">
+                    Color
+                  </span>
+                  <button
+                    type="button"
+                    className=${`btn small w-full ${colorMode === 'natural' ? 'primary' : ''}`}
+                    onClick=${() => setColorMode('natural')}
+                  >
+                    Natural
+                  </button>
+                  <button
+                    type="button"
+                    className=${`btn small w-full ${colorMode === 'elevation' ? 'primary' : ''}`}
+                    onClick=${() => setColorMode('elevation')}
+                  >
+                    Elevation
+                  </button>
+                  <button
+                    type="button"
+                    className=${`btn small w-full ${colorMode === 'slope' ? 'primary' : ''}`}
+                    onClick=${() => setColorMode('slope')}
+                  >
+                    Slope
+                  </button>
+                </div>
+
+                <div className="border-t border-[#666668]/45"></div>
+
+                <div className="flex flex-col gap-1.5">
+                  <span className="px-2 text-[10px] font-bold uppercase tracking-wider text-[#8d8d91]">
+                    Camera
+                  </span>
+                  <button
+                    type="button"
+                    className="btn small w-full"
+                    onClick=${() => applyCameraPreset('lander')}
+                  >
+                    🎯 Lander POV
+                  </button>
+                  <button
+                    type="button"
+                    className="btn small w-full"
+                    onClick=${() => applyCameraPreset('rim')}
+                  >
+                    ⛰️ Crater Rim
+                  </button>
+                  <button
+                    type="button"
+                    className="btn small w-full"
+                    onClick=${() => applyCameraPreset('orbit')}
+                  >
+                    🛰️ Top-Down
+                  </button>
+                </div>
+              </div>
+            `}
           </div>
 
-          <div className="flex items-center gap-1.5">
-            <span>Camera:</span>
-            <button type="button" className="btn small" onClick=${() => applyCameraPreset('lander')}>
-              🎯 Lander POV
-            </button>
-            <button type="button" className="btn small" onClick=${() => applyCameraPreset('rim')}>
-              ⛰️ Crater Rim
-            </button>
-            <button type="button" className="btn small" onClick=${() => applyCameraPreset('orbit')}>
-              🛰️ Top-Down
-            </button>
+          <div className="flex items-center gap-2">
+            <label htmlFor="vert-exag-slider" className="whitespace-nowrap">
+              Terrain Relief Scale <strong>${vertExag.toFixed(1)}x</strong>
+            </label>
+            <input
+              id="vert-exag-slider"
+              type="range"
+              min="1"
+              max="4"
+              step="0.25"
+              value=${vertExag}
+              onChange=${(e) => setVertExag(Number(e.target.value))}
+              style=${{ width: '95px' }}
+            />
           </div>
         </div>
       `}
@@ -1966,34 +2016,34 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
         </div>
       </div>
 
-      <div className="space-y-1.5">
-        <div className="slider-bar">
-          <button
-            type="button"
-            className="btn small"
-            onClick=${() => setIsPlaying((p) => !p)}
-            disabled=${timeline.length <= 1}
-          >
-            ${isPlaying ? '⏸ Pause' : '▶ Play'}
-          </button>
+      <div className="slider-bar">
+        <button
+          type="button"
+          className="btn small"
+          onClick=${() => setIsPlaying((p) => !p)}
+          disabled=${timeline.length <= 1}
+        >
+          ${isPlaying ? '⏸ Pause' : '▶ Play'}
+        </button>
 
-          <button
-            type="button"
-            className="btn small"
-            onClick=${() => setPlaySpeed((s) => (s === 1 ? 2 : s === 2 ? 4 : 1))}
-            title="Playback Speed"
-          >
-            ${playSpeed}x
-          </button>
+        <button
+          type="button"
+          className="btn small"
+          onClick=${() => setPlaySpeed((s) => (s === 1 ? 2 : s === 2 ? 4 : 1))}
+          title="Playback Speed"
+        >
+          ${playSpeed}x
+        </button>
 
-          <label htmlFor="time-slider-3d" className="text-xs font-mono text-slate-300 whitespace-nowrap">
-            <strong>
-              ${activeFrame.timestamp
-                ? activeFrame.timestamp.replace('T', ' ').slice(0, 16) + ' UTC'
-                : 'Awaiting simulation'}
-            </strong>
-          </label>
+        <label htmlFor="time-slider-3d" className="text-xs font-mono text-slate-300 whitespace-nowrap">
+          <strong>
+            ${activeFrame.timestamp
+              ? activeFrame.timestamp.replace('T', ' ').slice(0, 16) + ' UTC'
+              : 'Awaiting simulation'}
+          </strong>
+        </label>
 
+        <div className="flex-1 flex flex-col gap-1.5 min-w-0">
           <input
             id="time-slider-3d"
             type="range"
@@ -2003,17 +2053,23 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
             onChange=${handleSliderChange}
             className="w-full accent-sky-500 cursor-pointer"
           />
-        </div>
 
-        <div className="flex items-center gap-2 px-1">
           <div
-            className="w-full h-2 rounded-full overflow-hidden border border-slate-700/80"
+            className="relative w-full h-2 rounded-full overflow-hidden border border-slate-700/80"
             style=${{ background: timelineGradient }}
             title="Mission Timeline Bar: Green = Operational Window (Sun + Earth DTE), Amber = Sun Only, Slate = Lunar Shadow"
-          ></div>
-          <span className="text-[10px] font-mono text-slate-400 whitespace-nowrap">
-            🟢 Sun+DTE · 🟡 Sun · ⚫ Shadow
-          </span>
+          >
+            <div
+              className="absolute top-0 bottom-0 w-0.5 bg-white shadow-[0_0_4px_#fff] pointer-events-none"
+              style=${{ left: `${(stepIdx / Math.max(1, timeline.length - 1)) * 100}%` }}
+            ></div>
+          </div>
+
+          <div className="flex justify-end">
+            <span className="text-[10px] font-mono text-slate-400 whitespace-nowrap">
+              🟢 Sun+DTE · 🟡 Sun · ⚫ Shadow
+            </span>
+          </div>
         </div>
       </div>
     </div>
