@@ -1,37 +1,40 @@
 # backend/main.py
+import struct
+import zlib
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from contextlib import asynccontextmanager
+
 import numpy as np
+import rasterio
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from starlette.concurrency import run_in_threadpool
+from rasterio.enums import Resampling
 from skyfield import almanac
 
-from data_loader import get_sites_catalog, get_planetary_context, LOLA_DEM_PATH
-from sites_catalog import SITES_CATALOG, get_site_by_id
+from data_loader import LOLA_DEM_PATH, get_planetary_context, get_sites_catalog
 from ephemeris_engine import calcular_visibilidade
-from terrain_engine import gerar_perfil_horizonte_360, aplicar_obstrucao_terreno, identificar_site_conhecido
 from metrics_analyzer import analisar_metricas
+from sites_catalog import SITES_CATALOG, get_site_by_id
+from terrain_engine import aplicar_obstrucao_terreno, gerar_perfil_horizonte_360, identificar_site_conhecido
 
-
-import asyncio
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if LOLA_DEM_PATH.exists():
-        print(f"LOLA DEM carregado localmente: {LOLA_DEM_PATH.name}")
+        print(f"LOLA DEM loaded locally: {LOLA_DEM_PATH.name}")
         app.state.lola_dem_path = LOLA_DEM_PATH
     else:
-        print("[AVISO] LOLA DEM não encontrado em data/lola_dem/. Usando fallback topográfico.")
+        print("[WARNING] LOLA DEM not found in data/lola_dem/.")
     yield
 
 
 app = FastAPI(
     title="NASA Lunar Landing Site Planner API",
-    description="Motor de cálculo de efemérides, topografia 360° e visibilidade lunar",
+    description="Lunar ephemeris, 360° LOLA topography, and visibility analysis engine",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -43,7 +46,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-NOME_PADRAO = "Ponto Customizado"
+NOME_PADRAO = "Custom Coordinates"
 
 
 class SimulacaoRequest(BaseModel):
@@ -55,7 +58,7 @@ class SimulacaoRequest(BaseModel):
     ano: int = Field(default=2026, ge=1900, le=2050)
     mes: int = Field(default=11, ge=1, le=12)
     dia: int = Field(default=15, ge=1, le=31)
-    data_inicio: str | None = Field(default=None, description="Opcional YYYY-MM-DD")
+    data_inicio: str | None = Field(default=None, description="Optional YYYY-MM-DD")
     dias_simulacao: int = Field(default=30, ge=1, le=90)
     passo_horas: int = Field(default=1, ge=1, le=24)
     usar_topografia: bool = Field(default=True)
@@ -73,7 +76,7 @@ def _normalizar_efemerides(dados_brutos: list | dict, passo_horas: int) -> dict:
         return dados_brutos
 
     if not dados_brutos:
-        raise ValueError("calcular_visibilidade retornou uma lista vazia.")
+        raise ValueError("calcular_visibilidade returned an empty list.")
 
     return {
         "passo_horas": passo_horas,
@@ -87,21 +90,15 @@ def _normalizar_efemerides(dados_brutos: list | dict, passo_horas: int) -> dict:
         "distancia_terra_km": [item.get("earth_distance_km", 384400.0) for item in dados_brutos],
     }
 
-# Adicione no topo do backend/main.py:
-import io
-import rasterio
-from rasterio.enums import Resampling
-from fastapi.responses import Response
-
 
 @app.get("/api/lola-polar-map")
 def obter_mapa_polar_lola():
     """
-    Gera uma imagem PNG real (512x512) de relevo sombreado (hillshade) diretamente
-    do GeoTIFF NASA LOLA do Polo Sul (-80°S a -90°S) para texturizar o Globo 3D.
+    Gera PNG real (512x512) de relevo sombreado (hillshade) diretamente do GeoTIFF
+    NASA LOLA do Polo Sul (-80°S a -90°S) para texturizar o Globo 3D.
     """
     if not LOLA_DEM_PATH.exists():
-        raise HTTPException(status_code=404, detail="Arquivo LOLA DEM não encontrado.")
+        raise HTTPException(status_code=404, detail="LOLA DEM file not found.")
 
     size = 512
     with rasterio.open(LOLA_DEM_PATH) as src:
@@ -115,7 +112,6 @@ def obter_mapa_polar_lola():
     med = float(np.nanmean(z))
     z = np.where(np.isnan(z), med, z)
 
-    # Hillshade topográfico real para destacar crateras (Shackleton, Cabeus, de Gerlache)
     dy, dx = np.gradient(z, 240.0)
     slope = np.pi / 2.0 - np.arctan(np.hypot(dx, dy))
     aspect = np.arctan2(-dx, dy)
@@ -124,13 +120,8 @@ def obter_mapa_polar_lola():
     shaded = np.sin(alt_rad) * np.sin(slope) + np.cos(alt_rad) * np.cos(slope) * np.cos(az_rad - aspect)
     shaded = np.clip((shaded + 1.0) * 0.5, 0.0, 1.0)
 
-    # Combina altimetria normalizada + sombreamento topográfico
     z_norm = (z - np.min(z)) / max(1.0, float(np.max(z) - np.min(z)))
     img_gray = np.clip((0.45 * z_norm + 0.55 * shaded) * 235 + 20, 0, 255).astype(np.uint8)
-
-    # Codifica PNG puro sem dependências extras usando zlib + struct
-    import struct
-    import zlib
 
     raw_rows = b"".join(b"\x00" + img_gray[r].tobytes() for r in range(size))
     compressed = zlib.compress(raw_rows, level=6)
@@ -141,6 +132,7 @@ def obter_mapa_polar_lola():
     ihdr = struct.pack("!IIBBBBB", size, size, 8, 0, 0, 0, 0)
     png_bytes = b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", compressed) + _chunk(b"IEND", b"")
     return Response(content=png_bytes, media_type="image/png")
+
 
 @app.get("/api/sites")
 def listar_locais_predefinidos():
@@ -154,11 +146,10 @@ def obter_fases_lunares(
     lat: float = Query(default=-89.9),
     lon: float = Query(default=0.0),
 ):
-    """Calcula a fase lunar real e iluminação via skyfield.almanac e DE421."""
     try:
         dt0 = datetime.strptime(start_date.strip(), "%Y-%m-%d").replace(tzinfo=UTC)
     except ValueError:
-        raise HTTPException(status_code=400, detail="start_date deve estar no formato YYYY-MM-DD")
+        raise HTTPException(status_code=400, detail="start_date must be YYYY-MM-DD")
 
     ctx = get_planetary_context()
     ts, eph = ctx["ts"], ctx["eph"]
@@ -169,21 +160,25 @@ def obter_fases_lunares(
     illum_pct = round(float(almanac.fraction_illuminated(eph, "moon", t0)) * 100.0, 1)
 
     nomes_fases = [
-        "Lua Nova",
-        "Lua Crescente",
-        "Quarto Crescente",
-        "Gibosa Crescente",
-        "Lua Cheia",
-        "Gibosa Minguante",
-        "Quarto Minguante",
-        "Lua Minguante",
+        "New Moon",
+        "Waxing Crescent",
+        "First Quarter",
+        "Waxing Gibbous",
+        "Full Moon",
+        "Waning Gibbous",
+        "Last Quarter",
+        "Waning Crescent",
     ]
     idx_fase = int(((fase_graus + 22.5) % 360) // 45)
-    fase_nome = f"{nomes_fases[idx_fase]} ({illum_pct}% iluminada)"
+    fase_nome = f"{nomes_fases[idx_fase]} ({illum_pct}% illuminated)"
 
     times_fases, estados_fases = almanac.find_discrete(t0, t1, almanac.moon_phases(eph))
     eventos = [
-        {"timestamp": tf.utc_iso(), "fase_id": int(ef), "fase": ["Lua Nova", "Quarto Crescente", "Lua Cheia", "Quarto Minguante"][int(ef)]}
+        {
+            "timestamp": tf.utc_iso(),
+            "fase_id": int(ef),
+            "fase": ["New Moon", "First Quarter", "Full Moon", "Last Quarter"][int(ef)],
+        }
         for tf, ef in zip(times_fases, estados_fases)
     ]
 
@@ -201,11 +196,10 @@ def obter_trajetoria_viagem(
     start_date: str = Query(default="2027-03-01"),
     duration_days: int = Query(default=4, ge=1, le=15),
 ):
-    """Calcula vetores reais Terra-Lua (DE421) e curva de transferência translunar (TLI)."""
     try:
         dt0 = datetime.strptime(start_date.strip(), "%Y-%m-%d").replace(tzinfo=UTC)
     except ValueError:
-        raise HTTPException(status_code=400, detail="start_date deve estar no formato YYYY-MM-DD")
+        raise HTTPException(status_code=400, detail="start_date must be YYYY-MM-DD")
 
     ctx = get_planetary_context()
     ts, earth, moon = ctx["ts"], ctx["earth"], ctx["moon"]
@@ -214,17 +208,14 @@ def obter_trajetoria_viagem(
     dts = [dt0 + timedelta(hours=(duration_days * 24 * i) / steps) for i in range(steps + 1)]
     t_arr = ts.from_datetimes(dts)
 
-    # Vetor geocêntrico real da Lua em km no instante de chegada
     moon_vec_km = (moon - earth).at(t_arr[-1]).position.km
     dist_km = float(np.linalg.norm(moon_vec_km))
 
-    # Escala para a cena Three.js (Terra em [-3.2, 0, 0] e Lua no destino real rotacionado)
     escala = 4.2 / 384400.0
     earth_scene = np.array([-3.2, 0.0, 0.0])
     moon_offset = np.array([moon_vec_km[0], moon_vec_km[2] * 0.35, moon_vec_km[1]]) * escala
     moon_scene = earth_scene + moon_offset
 
-    # Curva de transferência orbital suave (arco balístico TLI de 4 dias)
     trajectory = []
     perp = np.array([-moon_offset[2], 0.0, moon_offset[0]])
     perp = perp / (np.linalg.norm(perp) + 1e-9)
@@ -272,26 +263,27 @@ def simular_local(req: SimulacaoRequest):
         if req.data_inicio:
             partes = req.data_inicio.strip().split("-")
             if len(partes) != 3:
-                raise ValueError("data_inicio deve estar no formato YYYY-MM-DD")
+                raise ValueError("data_inicio must be YYYY-MM-DD")
             ano, mes, dia = int(partes[0]), int(partes[1]), int(partes[2])
             if not (1900 <= ano <= 2050):
-                raise ValueError("ano deve estar entre 1900 e 2050 (limite dos kernels SPICE)")
+                raise ValueError("year must be between 1900 and 2050 (SPICE kernel bounds)")
 
         if req.usar_topografia:
             perfil_horizonte = gerar_perfil_horizonte_360(req.lat, req.lon, req.elevacao_m)
         else:
             perfil_horizonte = {
-                "modo_terreno": "Esfera Lunar Ideal (Sem Obstrução Topográfica)",
+                "modo_terreno": "Ideal Lunar Sphere (Topographic Obstruction Disabled)",
+                "data_quality": "flat_disabled",
+                "resolution_m": None,
                 "site_id_detectado": None,
                 "azimutes_graus": list(range(360)),
                 "elevacao_horizonte_graus": [0.0] * 360,
                 "obstaculos_principais": [],
                 "terrain_grid": None,
                 "slope_deg_real": None,
-                "center_elevation_m_real": None,
+                "center_elevation_m_real": req.elevacao_m,
             }
 
-        # Usa a altitude real do LOLA DEM se disponível
         elevacao_efetiva = (
             perfil_horizonte["center_elevation_m_real"]
             if perfil_horizonte.get("center_elevation_m_real") is not None
@@ -330,7 +322,7 @@ def simular_local(req: SimulacaoRequest):
             "series_temporais": dados_processados,
         }
     except ValueError as ve:
-        raise HTTPException(status_code=400, detail=f"Parâmetro inválido: {str(ve)}")
+        raise HTTPException(status_code=400, detail=f"Invalid parameter: {str(ve)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -352,7 +344,7 @@ def comparar_cenarios(req: ComparacaoRequest):
         }
     raise HTTPException(
         status_code=422,
-        detail="Informe 'cenario_a' e 'cenario_b' ou uma lista em 'cenarios'.",
+        detail="Provide 'cenario_a' and 'cenario_b' or a list in 'cenarios'.",
     )
 
 
@@ -366,6 +358,7 @@ class PousoRequest(BaseModel):
     days: int = Field(default=30, ge=1, le=90)
     step_min: int = Field(default=60, ge=5, le=360)
     usar_topografia: bool = Field(default=True)
+
 
 def _normalizar_lon(lon: float) -> float:
     return ((lon + 180.0) % 360.0) - 180.0
@@ -440,13 +433,9 @@ def simular_pouso(req: PousoRequest):
     if slope is None:
         slope = _declividade_conhecida(site_id)
 
-    # Critérios Científicos NASA (HLS / VIPER / CLPS):
-    # 1. Declividade na zona de pouso <= 15.0°
-    # 2. Iluminação solar >= 50% da janela OU janela contínua >= 156h (6.5 dias terrestres) com >= 40% no mês
-    # 3. Visibilidade Direct-to-Earth (DTE) >= 50%
     seguranca = None if slope is None else (slope <= 15.0)
     iluminacao = (sun_pct >= 50.0) or (max_sun_h >= 156 and sun_pct >= 40.0)
-    comunicacao = earth_pct >= 40.0
+    comunicacao = earth_pct >= 50.0
 
     if seguranca is None:
         go_nogo = "INCONCLUSIVE"
@@ -460,7 +449,7 @@ def simular_pouso(req: PousoRequest):
         "site_name": nome,
         "lat": req.lat,
         "lon": req.lon,
-        "data_quality": perfil.get("data_quality", "lola"),
+        "data_quality": perfil.get("data_quality", "lola_real"),
         "resolution_m": perfil.get("resolution_m"),
         "modo_terreno": perfil.get("modo_terreno"),
         "start_date": res["configuracao"]["data_inicio"],
@@ -484,7 +473,7 @@ def simular_pouso(req: PousoRequest):
         "assumptions": [
             f"Lunar Ephemerides & Orientation: NASA/JPL SPICE (DE421, MOON_ME_DE421), {passo_h}h integration step.",
             f"360° Horizon & 3D Terrain: {perfil['modo_terreno']}.",
-            "Apparent Solar Disc: 0.265° semidiameter without atmospheric refraction.",
+            "Apparent Solar Disc: 0.265° semidiameter without atmospheric refraction; Direct-to-Earth (DTE) evaluated via geometric line-of-sight (0° terrain clearance; 2° RF multipath margin noted for link budget).",
             "NASA GO Criteria (Artemis/CLPS): Touchdown slope ≤ 15°, Earth DTE link ≥ 50%, and Solar availability ≥ 50% (or ≥ 156h continuous sunlit sortie window with ≥ 40% monthly illumination).",
             m["contexto_educacional"],
         ],
@@ -493,6 +482,7 @@ def simular_pouso(req: PousoRequest):
         "evento_terra": m["evento_terra"],
         "metricas_resumo": m,
     }
+
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 if FRONTEND_DIR.exists():

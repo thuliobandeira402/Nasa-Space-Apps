@@ -3,111 +3,110 @@ from pydantic import BaseModel, Field
 
 
 class LunarSite(BaseModel):
-    id: str = Field(..., description="Identificador único do local")
-    name: str = Field(..., description="Nome oficial do local lunar")
-    region: str = Field(..., description="Região selenográfica")
-    lat: float = Field(..., ge=-90.0, le=90.0, description="Latitude selenográfica em graus")
-    lon: float = Field(..., ge=-180.0, le=180.0, description="Longitude selenográfica em graus")
-    elevation_m: float = Field(..., description="Elevação média relativa ao datum LOLA (m)")
-    mission_context: str = Field(..., description="Missão ou programa NASA associado")
-    scientific_highlight: str = Field(..., description="Relevância científica e de iluminação/comunicação")
-    expected_sunlight_pct: float = Field(..., description="Estimativa média de iluminação solar anual (%)")
-    earth_visibility_note: str = Field(..., description="Condição de visada direta (Line-of-Sight) com a Terra")
+    id: str = Field(..., description="Unique landing site identifier")
+    name: str = Field(..., description="Official lunar site name")
+    region: str = Field(..., description="Selenographic region")
+    lat: float = Field(..., ge=-90.0, le=90.0, description="Selenographic latitude in degrees")
+    lon: float = Field(..., ge=-180.0, le=180.0, description="Selenographic longitude in degrees")
+    elevation_m: float = Field(..., description="Mean elevation relative to LOLA datum (m)")
+    mission_context: str = Field(..., description="Associated NASA mission or program")
+    scientific_highlight: str = Field(..., description="Scientific, illumination, and communications significance")
+    expected_sunlight_pct: float = Field(..., description="Estimated mean annual solar illumination (%)")
+    earth_visibility_note: str = Field(..., description="Direct-to-Earth (Line-of-Sight) visibility condition")
 
 
 CURATED_LUNAR_SITES: list[LunarSite] = [
     LunarSite(
         id="shackleton_rim",
         name="Shackleton Crater Rim (Peak of Eternal Light)",
-        region="Polo Sul Lunar",
+        region="Lunar South Pole",
         lat=-89.90,
         lon=0.00,
         elevation_m=1500.0,
-        mission_context="Artemis III — Região Candidata de Pouso",
-        scientific_highlight="Borda elevada com quase iluminação solar contínua (~85-90%) adjacente a PSRs ricos em gelo de água no interior da cratera.",
+        mission_context="Artemis III — Candidate Landing Region",
+        scientific_highlight="Elevated crater rim with near-continuous solar illumination (~85–90%) adjacent to water-ice-bearing PSRs inside the crater.",
         expected_sunlight_pct=86.5,
-        earth_visibility_note="Visibilidade intermitente da Terra conforme a libração lunar (~50% do ciclo).",
+        earth_visibility_note="Intermittent Earth visibility driven by lunar libration (~50% of the synodic cycle).",
     ),
     LunarSite(
         id="connecting_ridge",
         name="Connecting Ridge (Shackleton–de Gerlache)",
-        region="Polo Sul Lunar",
+        region="Lunar South Pole",
         lat=-89.45,
         lon=-137.50,
         elevation_m=1850.0,
-        mission_context="Artemis III — Zona Prioritária de Energia Solar",
-        scientific_highlight="Crista topográfica que conecta as crateras Shackleton e de Gerlache; um dos pontos mais iluminados de toda a Lua.",
+        mission_context="Artemis III — High-Priority Solar Power Zone",
+        scientific_highlight="Topographic ridge linking Shackleton and de Gerlache craters; one of the most persistently sunlit locations on the Moon.",
         expected_sunlight_pct=89.0,
-        earth_visibility_note="Excelente linha de visada direta para comunicações Terra-Lua durante longos períodos.",
+        earth_visibility_note="Strong direct line-of-sight for Earth–Moon communications over extended windows.",
     ),
     LunarSite(
         id="malapert_massif",
         name="Malapert Massif",
-        region="Polo Sul Lunar (86°S)",
+        region="Lunar South Pole (86°S)",
         lat=-86.04,
         lon=-2.70,
         elevation_m=4700.0,
-        mission_context="Artemis III / Estação de Retransmissão Lunar",
-        scientific_highlight="Maciço montanhoso de quase 5 km de altitude acima do datum LOLA, ideal para torres de relé de comunicação e painéis solares.",
+        mission_context="Artemis III / Lunar Communications Relay Station",
+        scientific_highlight="Mountain massif rising nearly 5 km above the LOLA datum, ideal for lunar relay towers and solar power arrays.",
         expected_sunlight_pct=78.0,
-        earth_visibility_note="Visada quase permanente da Terra devido à altitude elevada e latitude de 86°S.",
+        earth_visibility_note="Near-permanent direct Earth visibility due to high altitude and 86°S latitude.",
     ),
     LunarSite(
         id="cabeus_crater",
         name="Cabeus Crater (Floor / PSR)",
-        region="Polo Sul Lunar (85°S)",
+        region="Lunar South Pole (85°S)",
         lat=-84.90,
         lon=-35.50,
         elevation_m=-2100.0,
         mission_context="NASA LCROSS Impact Site (2009)",
-        scientific_highlight="Região Permanentemente Sombreada (PSR) onde a sonda LCROSS confirmou depósitos significativos de gelo de água e voláteis.",
+        scientific_highlight="Permanently Shadowed Region (PSR) where the LCROSS mission confirmed significant deposits of water ice and volatiles.",
         expected_sunlight_pct=0.0,
-        earth_visibility_note="Sombra permanente; exige satélite de retransmissão orbital para comunicação direta.",
+        earth_visibility_note="Permanent shadow; requires an orbital relay satellite for communications.",
     ),
     LunarSite(
         id="im1_nova_c",
-        name="Malapert A (Pouso IM-1 Odysseus / Nova-C)",
-        region="Polo Sul Lunar (80°S)",
+        name="Malapert A (IM-1 Odysseus / Nova-C Landing)",
+        region="Lunar South Pole (80°S)",
         lat=-80.13,
         lon=1.44,
         elevation_m=-650.0,
         mission_context="NASA CLPS / Intuitive Machines IM-1 (2024)",
-        scientific_highlight="Primeiro pouso comercial e da era Artemis próximo ao Polo Sul lunar, validando navegação em terreno acidentado de baixa elevação solar.",
+        scientific_highlight="First commercial and Artemis-era touchdown near the lunar south pole, validating precision landing under low-angle solar illumination.",
         expected_sunlight_pct=52.0,
-        earth_visibility_note="Visada direta constante com estações terrestres na faixa de 80°S.",
+        earth_visibility_note="Continuous direct line-of-sight to Earth ground stations at 80°S latitude.",
     ),
     LunarSite(
         id="nobile_rim",
         name="Nobile Crater Rim",
-        region="Polo Sul Lunar (85°S)",
+        region="Lunar South Pole (85°S)",
         lat=-85.20,
         lon=53.50,
         elevation_m=1200.0,
         mission_context="NASA VIPER / Artemis Candidate Region",
-        scientific_highlight="Borda da cratera Nobile com terreno acessível para rovers explorarem áreas sombreadas vizinhas em busca de hidrogênio.",
+        scientific_highlight="Nobile crater rim featuring rover-traversable slopes with access to neighboring shadowed zones for hydrogen prospecting.",
         expected_sunlight_pct=71.0,
-        earth_visibility_note="Comunicação direta estável com a Terra na maior parte do mês sinódico.",
+        earth_visibility_note="Stable Direct-to-Earth communications across most of the synodic month.",
     ),
     LunarSite(
         id="apollo_11",
         name="Mare Tranquillitatis (Tranquility Base)",
-        region="Equatorial Lunar (Referência Histórica)",
+        region="Lunar Equatorial (Historical Baseline)",
         lat=0.6741,
         lon=23.4730,
         elevation_m=-1850.0,
         mission_context="NASA Apollo 11 (1969)",
-        scientific_highlight="Ponto de referência equatorial para comparação: ciclo rígido de ~14 dias terrestres de luz seguidos de ~14 dias de noite lunar.",
+        scientific_highlight="Equatorial baseline for comparison: rigid ~14-Earth-day sunlit period followed by ~14 Earth days of lunar night.",
         expected_sunlight_pct=50.0,
-        earth_visibility_note="Terra fixa próxima ao zênite local 100% do tempo (face visível).",
+        earth_visibility_note="Earth remains fixed near local zenith 100% of the time (lunar nearside).",
     ),
 ]
 
-# Exporta como lista de dicts pronto para serialização JSON direta no FastAPI
 SITES_CATALOG: list[dict] = [site.model_dump() for site in CURATED_LUNAR_SITES]
 
 
 def get_site_by_id(site_id: str) -> dict | None:
-    """Busca um local curado pelo seu identificador."""
+    """Retrieves a curated lunar landing site by its identifier."""
     for site in SITES_CATALOG:
         if site["id"] == site_id:
             return site

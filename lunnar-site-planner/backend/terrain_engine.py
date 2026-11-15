@@ -1,11 +1,9 @@
 # backend/terrain_engine.py
 import math
 import numpy as np
-from data_loader import get_horizon_profiles, LOLA_DEM_PATH
+from data_loader import LOLA_DEM_PATH
 from sites_catalog import SITES_CATALOG
 from lola_horizon import horizonte_lola, extrair_malha_terreno_lola
-
-R_LUA_M = 1_737_400.0
 
 
 def _distancia_angular_graus(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -25,72 +23,45 @@ def identificar_site_conhecido(lat: float, lon: float, tolerancia_graus: float =
 
 
 def gerar_perfil_horizonte_360(lat: float, lon: float, elevacao_m: float = 0.0) -> dict:
+    """
+    Obtém o perfil topográfico 360° (raio 100 km) e a malha 3D exclusivamente do GeoTIFF
+    real NASA LRO/LOLA para a região polar sul (lat <= -80°).
+    Fora da cobertura polar do DEM (-80°S), utiliza esfera lunar de referência (0°),
+    sem gerar relevo fictício ou sintético.
+    """
     azimutes = np.arange(0, 360, 1)
-    profiles = get_horizon_profiles()
     site_id = identificar_site_conhecido(lat, lon)
 
-    # Nível 1 (Primário): Dados Reais do GeoTIFF NASA LOLA (cobertura -80°S a -90°S)
-    if lat <= -80.0 and LOLA_DEM_PATH.exists():
-        try:
-            horizonte_real = horizonte_lola(lat, lon, str(LOLA_DEM_PATH))
-            malha = extrair_malha_terreno_lola(lat, lon, str(LOLA_DEM_PATH), grid_size=128)
-            res_m = int(round(malha["pixel_m"]))
-            return {
-                "data_quality": "lola",
-                "resolution_m": res_m,
-                "modo_terreno": f"NASA LOLA LDEM (Real Data, {res_m} m/px)",
-                "site_id_detectado": site_id,
-                "azimutes_graus": azimutes.tolist(),
-                "elevacao_horizonte_graus": horizonte_real,
-                "obstaculos_principais": [],
-                "terrain_grid": malha,
-                "slope_deg_real": malha["slope_deg"],
-                "center_elevation_m_real": malha["center_elevation_m"],
-            }
-        except Exception as e:
-            print(f"[LOLA] Erro ao ler DEM ({e}); verificando perfil catalogado.")
+    if lat <= -80.0:
+        if not LOLA_DEM_PATH.exists():
+            raise FileNotFoundError(
+                f"NASA LOLA DEM GeoTIFF not found at {LOLA_DEM_PATH}. Place LDEM_80S_240MPP_COMPACT.TIF in data/lola_dem/."
+            )
 
-    # Nível 2: Sítio catalogado com perfil topográfico publicado (sem geração aleatória)
-    if site_id and site_id in profiles:
-        cfg = profiles[site_id]
-        base_deg = float(cfg.get("base_horizon_deg", 0.0))
-        horizonte = np.full(360, base_deg, dtype=float)
-        obstaculos_info = cfg.get("obstacles", [])
-
-        for obs in obstaculos_info:
-            centro = float(obs["az_center"])
-            largura = float(obs["width"])
-            altura_max = float(obs["max_elev_deg"])
-            diff = np.minimum(np.abs(azimutes - centro), 360.0 - np.abs(azimutes - centro))
-            curva_montanha = altura_max * np.exp(-0.5 * (diff / (largura / 2.5)) ** 2)
-            horizonte = np.maximum(horizonte, base_deg + curva_montanha)
+        horizonte_real = horizonte_lola(lat, lon, str(LOLA_DEM_PATH), raio_m=100_000.0)
+        malha = extrair_malha_terreno_lola(lat, lon, str(LOLA_DEM_PATH), grid_size=128, span_km=36.0)
+        res_m = int(round(malha["pixel_m"]))
 
         return {
-            "data_quality": "catalog",
-            "resolution_m": None,
-            "modo_terreno": f"Cataloged Topographic Profile ({site_id})",
+            "modo_terreno": f"NASA LOLA LDEM (Real Data, {res_m} m/px)",
+            "data_quality": "lola_real",
+            "resolution_m": res_m,
             "site_id_detectado": site_id,
             "azimutes_graus": azimutes.tolist(),
-            "elevacao_horizonte_graus": np.round(horizonte, 2).tolist(),
-            "obstaculos_principais": obstaculos_info,
-            "terrain_grid": None,
-            "slope_deg_real": None,
-            "center_elevation_m_real": elevacao_m,
+            "elevacao_horizonte_graus": horizonte_real,
+            "obstaculos_principais": [],
+            "terrain_grid": malha,
+            "slope_deg_real": malha["slope_deg"],
+            "center_elevation_m_real": malha["center_elevation_m"],
         }
 
-    # Nível 3 (Fora da cobertura polar -80°S, ex: Apollo 11): Datum Esférico Lunar LOLA (sem ruído aleatório)
-    # Depressão geométrica do horizonte devido à altitude acima do raio médio lunar (R = 1737.4 km)
-    h_acima = max(0.0, elevacao_m)
-    depressao_deg = -math.degrees(math.acos(R_LUA_M / (R_LUA_M + h_acima))) if h_acima > 0 else 0.0
-    horizonte = np.full(360, round(depressao_deg, 3), dtype=float)
-
     return {
-        "data_quality": "spherical_datum",
+        "modo_terreno": "Lunar Reference Sphere (Outside -80°S LOLA Polar DEM)",
+        "data_quality": "reference_sphere_no_dem",
         "resolution_m": None,
-        "modo_terreno": "Lunar Reference Sphere (Outside -80°S LOLA Polar DEM Coverage)",
         "site_id_detectado": site_id,
         "azimutes_graus": azimutes.tolist(),
-        "elevacao_horizonte_graus": horizonte.tolist(),
+        "elevacao_horizonte_graus": [0.0] * 360,
         "obstaculos_principais": [],
         "terrain_grid": None,
         "slope_deg_real": None,
@@ -99,6 +70,9 @@ def gerar_perfil_horizonte_360(lat: float, lon: float, elevacao_m: float = 0.0) 
 
 
 def aplicar_obstrucao_terreno(dados_efemerides: dict, perfil_horizonte: dict) -> dict:
+    """
+    Cruza as séries temporais do Sol e da Terra (JPL DE421) com o perfil de horizonte 360° real.
+    """
     horizonte_360 = np.array(perfil_horizonte["elevacao_horizonte_graus"], dtype=float)
 
     sol_alt = np.array(dados_efemerides["sol_elevacao_graus"], dtype=float)
@@ -114,7 +88,8 @@ def aplicar_obstrucao_terreno(dados_efemerides: dict, perfil_horizonte: dict) ->
     horizonte_direcao_terra = horizonte_360[terra_az_idx]
 
     sol_visivel = (sol_alt + 0.265) > horizonte_direcao_sol
-    terra_visivel = terra_alt > np.maximum(0.0, horizonte_direcao_terra)
+    terra_visivel = terra_alt > horizonte_direcao_terra
+    terra_link_rf_otimo = terra_alt > (horizonte_direcao_terra + 2.0)
 
     folga_sol_graus = sol_alt - horizonte_direcao_sol
     folga_terra_graus = terra_alt - horizonte_direcao_terra
@@ -127,6 +102,7 @@ def aplicar_obstrucao_terreno(dados_efemerides: dict, perfil_horizonte: dict) ->
         "folga_acima_horizonte_terra_graus": np.round(folga_terra_graus, 3).tolist(),
         "sol_visivel_bool": sol_visivel.tolist(),
         "terra_visivel_bool": terra_visivel.tolist(),
+        "terra_link_rf_otimo_bool": terra_link_rf_otimo.tolist(),
     })
 
     return resultado

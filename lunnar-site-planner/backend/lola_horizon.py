@@ -12,9 +12,18 @@ def latlon_para_xy_polar_sul(lat: float, lon: float) -> tuple[float, float]:
     return float(rho * np.sin(lam)), float(rho * np.cos(lam))
 
 
-def horizonte_360_de_dem(z, col0_x, row0_y, pixel_m, x_site, y_site, lon_deg,
-                         altura_obs_m=2.0, raio_m=40_000.0) -> list[float]:
-    """Elevação máxima do terreno (graus) em cada azimute 0..359 (0 = Norte, 90 = Leste)."""
+def horizonte_360_de_dem(
+    z,
+    col0_x,
+    row0_y,
+    pixel_m,
+    x_site,
+    y_site,
+    lon_deg,
+    altura_obs_m=2.0,
+    raio_m=100_000.0,
+) -> list[float]:
+    """Elevação máxima do terreno real LOLA (graus) em cada azimute 0..359 (0 = Norte, 90 = Leste)."""
 
     def amostrar(x, y):
         rows = (row0_y - y) / pixel_m
@@ -23,7 +32,7 @@ def horizonte_360_de_dem(z, col0_x, row0_y, pixel_m, x_site, y_site, lon_deg,
 
     z0 = amostrar(np.array([x_site]), np.array([y_site]))[0]
     if np.isnan(z0):
-        raise ValueError("Ponto fora da cobertura do DEM")
+        raise ValueError("Coordinate outside NASA LOLA DEM coverage.")
 
     dist = np.arange(pixel_m, raio_m + pixel_m, pixel_m)
     ang = np.radians(np.arange(360) + lon_deg)
@@ -39,9 +48,14 @@ def horizonte_360_de_dem(z, col0_x, row0_y, pixel_m, x_site, y_site, lon_deg,
     return np.round(h, 2).tolist()
 
 
-def horizonte_lola(lat: float, lon: float, dem_path: str,
-                   altura_obs_m: float = 2.0, raio_m: float = 40_000.0) -> list[float]:
-    """Lê só uma janela do GeoTIFF ao redor do ponto (não carrega o arquivo inteiro)."""
+def horizonte_lola(
+    lat: float,
+    lon: float,
+    dem_path: str,
+    altura_obs_m: float = 2.0,
+    raio_m: float = 100_000.0,
+) -> list[float]:
+    """Lê apenas a janela necessária do GeoTIFF LOLA ao redor do ponto (raio padrão de 100 km)."""
     import rasterio
     from rasterio.windows import from_bounds
 
@@ -71,7 +85,7 @@ def extrair_malha_terreno_lola(
     span_km: float = 36.0,
 ) -> dict:
     """
-    Extrai malha 3D de alta densidade (128x128 cobrindo 36 km x 36 km) do GeoTIFF LOLA
+    Extrai malha 3D real (128x128 cobrindo 36 km x 36 km) do GeoTIFF NASA LOLA
     e calcula a declividade local de pouso no ponto central nativo.
     """
     import rasterio
@@ -100,7 +114,7 @@ def extrair_malha_terreno_lola(
         t = src.window_transform(win)
 
     if np.all(np.isnan(z)):
-        raise ValueError("Janela sem dados válidos no DEM LOLA.")
+        raise ValueError("No valid elevation pixels found in NASA LOLA DEM window.")
 
     media_z = float(np.nanmean(z))
     z = np.where(np.isnan(z), media_z, z)
@@ -108,7 +122,6 @@ def extrair_malha_terreno_lola(
     col0_x = t.c + 0.5 * t.a
     row0_y = t.f + 0.5 * t.e
 
-    # 1. Declividade exata da zona de toque (touchdown zone) nos pixels nativos do LOLA
     r_center = int(round((row0_y - y_site) / pixel_m))
     c_center = int(round((x_site - col0_x) / pixel_m))
     r0, r1 = max(0, r_center - 2), min(z.shape[0], r_center + 3)
@@ -117,13 +130,10 @@ def extrair_malha_terreno_lola(
     if patch_local.shape[0] >= 3 and patch_local.shape[1] >= 3:
         dy_loc, dx_loc = np.gradient(patch_local, pixel_m)
         slopes_patch = np.degrees(np.arctan(np.hypot(dx_loc, dy_loc)))
-        # Em cristas polares (como Shackleton/Connecting Ridge), o lander pousa no topo plano da crista
-        # (menor declividade na célula central de 240m), evitando a parede interna da cratera
         slope_deg = float(np.round(np.percentile(slopes_patch, 25), 2))
     else:
         slope_deg = 5.0
 
-    # 2. Malha 3D regional orientada pelo Norte local (128x128 em 36 km x 36 km)
     lin = np.linspace(-half_span_m, half_span_m, grid_size)
     north_m, east_m = np.meshgrid(lin[::-1], lin, indexing="ij")
 

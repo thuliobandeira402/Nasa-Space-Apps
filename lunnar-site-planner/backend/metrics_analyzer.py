@@ -3,11 +3,15 @@ import numpy as np
 
 
 def _analisar_proximo_evento(vetor_visivel: np.ndarray, passo_horas: int, nome_astro: str) -> dict:
+    """
+    Identifica se o astro (Sol ou Terra) está visível no instante t=0 (pouso)
+    e calcula quantas horas faltam até a próxima transição (Sunset/Sunrise ou Earthset/Earthrise).
+    """
     if len(vetor_visivel) == 0:
         return {
             "visivel_no_pouso": False,
             "horas_ate_transicao": 0,
-            "tipo_transicao": "SEM_DADOS",
+            "tipo_transicao": "NO_DATA",
             "descricao_status": "Insufficient data",
         }
 
@@ -18,18 +22,18 @@ def _analisar_proximo_evento(vetor_visivel: np.ndarray, passo_horas: int, nome_a
         horas = int(indices_mudanca[0] * passo_horas)
         if visivel_inicial:
             tipo = "SUNSET" if nome_astro == "Sol" else "EARTHSET"
-            desc = f"{horas}h remaining until {'Sunset' if nome_astro == 'Sol' else 'Earth occultation'}"
+            desc = f"{horas}h remaining until {'sunset' if nome_astro == 'Sol' else 'Earth occultation'}"
         else:
             tipo = "SUNRISE" if nome_astro == "Sol" else "EARTHRISE"
-            desc = f"{horas}h until {'Sunrise' if nome_astro == 'Sol' else 'Earth signal acquisition'}"
+            desc = f"{horas}h until {'sunrise' if nome_astro == 'Sol' else 'Earth signal acquisition'}"
     else:
         horas = int(len(vetor_visivel) * passo_horas)
         if visivel_inicial:
-            tipo = "CONTINUO_VISIVEL"
-            desc = f"Continuous {'sunlight' if nome_astro == 'Sol' else 'DTE link'} throughout window ({horas}h)"
+            tipo = "CONTINUOUS_VISIBLE"
+            desc = f"Continuous {'solar illumination' if nome_astro == 'Sol' else 'Earth DTE link'} across window ({horas}h)"
         else:
-            tipo = "CONTINUO_OCULTO"
-            desc = f"Continuous {'shadow' if nome_astro == 'Sol' else 'occultation'} throughout window ({horas}h)"
+            tipo = "CONTINUOUS_OCCULTED"
+            desc = f"Continuous {'shadow' if nome_astro == 'Sol' else 'no direct Earth LOS'} across window ({horas}h)"
 
     return {
         "visivel_no_pouso": visivel_inicial,
@@ -51,13 +55,17 @@ def _calcular_maior_janela_continua(vetor_visivel: np.ndarray, passo_horas: int)
 
 
 def analisar_metricas(dados: dict) -> dict:
+    """
+    Transforma as séries temporais (efemérides + obstrução real LOLA)
+    nos KPIs executivos, engenharia de potência e contexto educacional em inglês.
+    """
     passo_horas = int(dados.get("passo_horas", 1))
     alt_sun = np.array(dados.get("sol_elevacao_graus", []), dtype=float)
     alt_earth = np.array(dados.get("terra_elevacao_graus", []), dtype=float)
     dist_earth = np.array(dados.get("distancia_terra_km", []), dtype=float)
 
     if len(alt_sun) == 0:
-        raise ValueError("As séries temporais de efemérides estão vazias.")
+        raise ValueError("Ephemeris time series are empty.")
 
     SOLAR_SEMIDIAMETER_DEG = 0.265
 
@@ -88,19 +96,14 @@ def analisar_metricas(dados: dict) -> dict:
     elevacao_max_sol = float(np.max(alt_sun))
     elevacao_min_sol = float(np.min(alt_sun))
 
-    # Critérios Científicos NASA (Artemis III / VIPER / CLPS):
-    # - Base Sustentada Polar: Sol >= 70% e DTE >= 50%
-    # - Missão de Superfície Padrão (Sortie CLPS/Artemis): Sol >= 50% (ou >= 156h contínuas = 6.5 dias) e DTE >= 50%
-    sol_aprovado = (pct_luz_real >= 50.0) or (maior_janela_sol_h >= 156 and pct_luz_real >= 40.0)
-    dte_aprovado = pct_comunicacao_real >= 40.0
-    if pct_luz_real >= 70.0 and dte_aprovado:
-        veredito = "OPTIMAL POLAR SITE (SUSTAINED)"
-    elif sol_aprovado and dte_aprovado:
-        veredito = "VIABLE MISSION (SORTIE / CLPS)"
-    elif sol_aprovado and not dte_aprovado:
-        veredito = "REQUIRES RELAY SATELLITE"
+    if pct_luz_real >= 70.0 and pct_comunicacao_real >= 50.0:
+        veredito = "VIABLE (OPTIMAL)"
+    elif pct_luz_real >= 35.0 and pct_comunicacao_real >= 20.0:
+        veredito = "CONDITIONAL / CRITICAL"
+    elif pct_luz_real >= 35.0 and pct_comunicacao_real < 20.0:
+        veredito = "REQUIRES ORBITAL RELAY"
     else:
-        veredito = "CRITICAL SHADOW / CONSTRAINED"
+        veredito = "UNVIABLE (EXTREME SHADOW)"
 
     return {
         "veredito": veredito,
@@ -119,9 +122,9 @@ def analisar_metricas(dados: dict) -> dict:
         "latencia_ida_volta_seg": round(latencia_media_seg, 2),
         "contexto_educacional": (
             f"Accounting for local LOLA topography, the Sun illuminates the landing site for {pct_luz_real:.1f}% of the window "
-            f"(longest continuous sunlit window: {maior_janela_sol_h}h; topographic shadow loss: {perda_sombra_terreno_pct:.1f}%). "
-            f"Max continuous night is {maior_janela_noite_h}h. "
-            f"With a peak solar elevation of {elevacao_max_sol:.1f}°, vertical solar arrays deliver "
-            f"{media_vert_pct:.1f}% average efficiency vs. {media_horiz_pct:.1f}% for horizontal panels."
+            f"(surrounding ridges and craters block {perda_sombra_terreno_pct:.1f}% of theoretical flat-horizon sunlight). "
+            f"The longest continuous lunar night lasts {maior_janela_noite_h} hours. "
+            f"Because the Sun reaches a maximum elevation of {elevacao_max_sol:.1f}°, vertical solar arrays "
+            f"achieve {media_vert_pct:.1f}% average geometric efficiency versus {media_horiz_pct:.1f}% for horizontal arrays."
         ),
     }
