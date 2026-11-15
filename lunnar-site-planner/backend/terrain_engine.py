@@ -68,10 +68,9 @@ def gerar_perfil_horizonte_360(lat: float, lon: float, elevacao_m: float = 0.0) 
     if lat <= -80.0 and LOLA_DEM_PATH.exists():
         try:
             horizonte_real = horizonte_lola(lat, lon, str(LOLA_DEM_PATH))
-            malha = extrair_malha_terreno_lola(lat, lon, str(LOLA_DEM_PATH), grid_size=64)
-            res_m = int(round(malha["pixel_m"]))
+            malha = extrair_malha_terreno_lola(lat, lon, str(LOLA_DEM_PATH), grid_size=128)
             return {
-                "modo_terreno": f"NASA LOLA LDEM (Real Data, {res_m} m/px)",
+                "modo_terreno": "NASA LOLA LDEM (Real Data, 240 m/px)",
                 "site_id_detectado": site_id,
                 "azimutes_graus": azimutes.tolist(),
                 "elevacao_horizonte_graus": horizonte_real,
@@ -107,7 +106,7 @@ def gerar_perfil_horizonte_360(lat: float, lon: float, elevacao_m: float = 0.0) 
             "elevacao_horizonte_graus": np.round(horizonte, 2).tolist(),
             "obstaculos_principais": obstaculos_info,
             "terrain_grid": malha_fallback,
-            "slope_deg_real": None,
+            "slope_deg_real": malha_fallback["slope_deg"],
             "center_elevation_m_real": elevacao_m,
         }
 
@@ -147,7 +146,7 @@ def gerar_perfil_horizonte_360(lat: float, lon: float, elevacao_m: float = 0.0) 
         "elevacao_horizonte_graus": np.round(horizonte, 2).tolist(),
         "obstaculos_principais": obstaculos_info,
         "terrain_grid": malha_fallback,
-        "slope_deg_real": None,
+        "slope_deg_real": malha_fallback["slope_deg"],
         "center_elevation_m_real": elevacao_m,
     }
 
@@ -172,9 +171,9 @@ def aplicar_obstrucao_terreno(dados_efemerides: dict, perfil_horizonte: dict) ->
     horizonte_direcao_sol = horizonte_360[sol_az_idx]
     horizonte_direcao_terra = horizonte_360[terra_az_idx]
 
-  # Há visibilidade real somente se o astro estiver ACIMA da montanha naquela direção
+    # Há visibilidade real somente se o astro estiver ACIMA da montanha naquela direção
     sol_visivel = (sol_alt + 0.265) > horizonte_direcao_sol
-    terra_visivel = terra_alt > np.maximum(0.0, horizonte_direcao_terra)
+    terra_visivel = terra_alt > horizonte_direcao_terra
 
     # Margem livre acima do horizonte (positivo = visível, negativo = quantos graus está escondido atrás da cratera)
     folga_sol_graus = sol_alt - horizonte_direcao_sol

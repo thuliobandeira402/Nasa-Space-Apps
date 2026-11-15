@@ -6,21 +6,20 @@
   <title>Lunar Site Planner · NASA Space Apps</title>
   <meta name="description" content="Compare locais e datas de pouso no polo sul lunar: Sol, Terra, energia e comunicação.">
 
-  <!-- 1. Configuração das rotas da API FastAPI (dados LRO/LOLA e de421.bsp rodam localmente no servidor, sem chave de API) -->
   <script>
     window.LUNAR_API_CONFIG = {
       BASE_URL: window.location.port && window.location.port !== '8000'
         ? 'http://127.0.0.1:8000'
         : '',
       ENDPOINTS: {
-        FASES: '/api/fases',            // GET  -> Ciclo sinódico e amanhecer lunar
-        VIAGEM: '/api/viagem',          // GET  -> Vetores (X, Y, Z) Sol, Terra, Lua e TLI
-        SIMULAR_POUSO: '/simular-pouso' // POST -> Slope, horizonte 360°, pôr do sol e sinal Terra
+        SITES: '/api/sites',
+        FASES: '/api/fases',
+        VIAGEM: '/api/viagem',
+        SIMULAR_POUSO: '/simular-pouso'
       }
     };
   </script>
 
-  <!-- 2. Import Map para React 18, HTM (JSX no navegador) e Three.js -->
   <script type="importmap">
     {
       "imports": {
@@ -33,7 +32,6 @@
     }
   </script>
 
-  <!-- 3. Tailwind CSS (preflight desativado para não sobrescrever seu css/style.css) -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -75,6 +73,7 @@
       <form id="scenario-form" autocomplete="off">
         <label for="site">Local de pouso</label>
         <select id="site" name="site"></select>
+        <p id="site-context" class="hint" style="margin-top: .4rem; line-height: 1.35;"></p>
 
         <div class="row only-engineer">
           <div>
@@ -87,8 +86,13 @@
           </div>
         </div>
 
+        <div class="only-engineer">
+          <label for="elev">Elevação ref. (m)</label>
+          <input id="elev" name="elev" type="number" step="10" min="-10000" max="15000" value="1500">
+        </div>
+
         <label for="start">Data de início (UTC)</label>
-        <input id="start" name="start" type="date" value="2027-03-01">
+        <input id="start" name="start" type="date" value="2026-12-20">
 
         <div class="row">
           <div>
@@ -97,8 +101,15 @@
           </div>
           <div class="only-engineer">
             <label for="step">Passo (min)</label>
-            <input id="step" name="step" type="number" min="5" max="360" step="5" value="60">
+            <input id="step" name="step" type="number" min="60" max="1440" step="60" value="60">
           </div>
+        </div>
+
+        <div class="only-engineer" style="margin-top: .75rem;">
+          <label for="use-topo" style="display: inline-flex; align-items: center; gap: .45rem; cursor: pointer; margin: 0;">
+            <input id="use-topo" name="use-topo" type="checkbox" checked style="width: auto; accent-color: var(--accent);">
+            <span>Aplicar relevo 360° (LRO/LOLA)</span>
+          </label>
         </div>
 
         <div class="actions">
@@ -113,27 +124,30 @@
     <section id="resultados" class="results" aria-labelledby="h-resultados">
       <h2 id="h-resultados" class="sr-only">Resultados da simulação</h2>
 
-      <!-- Cards de KPI (GO/NO-GO + Métricas Sol/Terra) -->
+      <!-- Cards de KPI -->
       <div class="cards" id="cards">
         <article class="card verdict" id="card-verdict" data-state="idle">
-          <h3>Viabilidade (GO / NO-GO)</h3>
+          <h3>Viabilidade da Missão</h3>
           <p class="big" id="verdict-text">—</p>
+          <p class="hint" id="verdict-sub">—</p>
           <ul class="checks only-engineer" id="verdict-checks"></ul>
         </article>
         <article class="card">
-          <h3> Luz solar</h3>
+          <h3>☀️ Luz solar</h3>
           <p class="big" id="m-sun-frac">—</p>
           <p class="hint" id="m-sun-next">—</p>
+          <p class="hint only-engineer" id="m-sun-power">—</p>
         </article>
         <article class="card">
-          <h3> Terra visível</h3>
+          <h3>🌍 Terra visível (DTE)</h3>
           <p class="big" id="m-earth-frac">—</p>
           <p class="hint" id="m-earth-next">—</p>
+          <p class="hint only-engineer" id="m-earth-lat">—</p>
         </article>
         <article class="card only-engineer">
-          <h3>Maior noite contínua</h3>
+          <h3>🌑 Maior noite contínua</h3>
           <p class="big" id="m-dark">—</p>
-          <p class="hint">Sem Sol acima do horizonte</p>
+          <p class="hint" id="m-dark-sub">Sem Sol acima do horizonte</p>
         </article>
       </div>
 
@@ -141,9 +155,12 @@
         Escolha um local e uma data e clique em <strong>Simular</strong>.
       </p>
 
-      <!-- Ponto de montagem do React + Three.js (Modo 1: Viagem, Modo 2: Globo 3D, Modo 3: Superfície + Slider de Tempo) -->
+      <!-- Viewport 3D (React + Three.js) -->
       <section class="panel" aria-labelledby="h-sim3d">
-        <h3 id="h-sim3d">Simulação Orbital e Topográfica 3D</h3>
+        <div class="comp-head" style="margin-bottom: .25rem;">
+          <h3 id="h-sim3d">Simulação Orbital e Topográfica 3D</h3>
+          <span id="terrain-badge" class="hint font-mono"></span>
+        </div>
         <p class="hint only-explorer">Alterne entre a trajetória Terra → Lua, o globo lunar e a visão da superfície.</p>
         <div id="react-3d-root"></div>
       </section>
@@ -151,7 +168,7 @@
       <div class="charts">
         <section class="panel chart-panel" aria-labelledby="h-elev">
           <h3 id="h-elev">Elevação do Sol e da Terra ao longo do tempo</h3>
-          <p class="hint only-explorer">Quando a linha está acima de zero, o astro aparece no céu.</p>
+          <p class="hint only-explorer">Quando a linha do Sol está acima da linha do relevo, há luz direta na superfície.</p>
           <div id="chart-elevation" class="chart" role="img" aria-label="Gráfico de elevação ao longo do tempo"></div>
         </section>
 
@@ -174,8 +191,8 @@
               <tr>
                 <th scope="col">Cenário</th>
                 <th scope="col">Decisão</th>
-                <th scope="col"> Sol</th>
-                <th scope="col"> Terra</th>
+                <th scope="col">☀️ Sol</th>
+                <th scope="col">🌍 Terra</th>
                 <th scope="col" class="only-engineer">Maior noite</th>
                 <th scope="col"><span class="sr-only">Remover</span></th>
               </tr>
@@ -187,14 +204,14 @@
       </section>
 
       <section class="panel only-engineer" aria-labelledby="h-assump">
-        <h3 id="h-assump">Premissas do cálculo</h3>
+        <h3 id="h-assump">Premissas e resumo de engenharia</h3>
         <ul id="assumptions" class="plain"></ul>
       </section>
     </section>
   </main>
 
   <footer class="footer">
-    <p>Dados: NASA/JPL (DE421, orientação lunar), LRO/LOLA (em integração). Projeto feito para o NASA Space Apps Challenge 2026.</p>
+    <p>Dados: NASA/JPL SPICE (DE421, MOON_ME_DE421) e LRO/LOLA DEM. Projeto feito para o NASA Space Apps Challenge 2026.</p>
   </footer>
 </body>
 </html>

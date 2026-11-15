@@ -1,5 +1,5 @@
 /**
- * Main Application Controller (NASA Lunar Site Planner)
+ * Controlador Principal da Aplicação (NASA Lunar Site Planner)
  */
 
 import { PRESET_SITES, getSites, getFases, getViagem, simularPouso } from "./api.js";
@@ -29,7 +29,7 @@ function setStatus(msg, isError = false) {
   el.classList.toggle("error", isError);
 }
 
-/* ---------- Engineer / Explorer Mode ---------- */
+/* ---------- Modo Engenheiro / Explorador ---------- */
 function definirModo(modo) {
   document.body.dataset.mode = modo;
   const radio = $(`mode-${modo}`);
@@ -52,7 +52,7 @@ function iniciarModo() {
   });
 }
 
-/* ---------- Site Catalog ---------- */
+/* ---------- Catálogo de Locais ---------- */
 async function carregarSites() {
   const res = await getSites();
   const lista = res?.data?.sites;
@@ -68,36 +68,45 @@ function popularSites() {
   if (!select) return;
   select.innerHTML =
     state.sites.map((s) => `<option value="${s.id}">${s.name}</option>`).join("") +
-    `<option value="custom">Custom Coordinates (Lat/Lon)...</option>`;
+    `<option value="custom">Coordenadas Personalizadas (Lat/Lon)...</option>`;
 }
 
 function aplicarSite() {
   const select = $("site");
+  const ctxEl = $("site-context");
   if (!select) return;
+
   const s = state.sites.find((x) => x.id === select.value);
   if (s) {
     if ($("lat")) $("lat").value = s.lat;
     if ($("lon")) $("lon").value = s.lon;
     if ($("elev") && typeof s.elevation_m === "number") $("elev").value = s.elevation_m;
+    if (ctxEl) {
+      ctxEl.textContent = s.mission_context
+        ? `${s.mission_context} — ${s.scientific_highlight || ""}`
+        : s.scientific_highlight || "";
+    }
+  } else if (ctxEl) {
+    ctxEl.textContent = "Ponto customizado na superfície lunar (usa LOLA DEM se lat ≤ -80°S).";
   }
 }
 
-/* ---------- Read Form Parameters ---------- */
+/* ---------- Leitura do Formulário ---------- */
 function lerParametros() {
-  const siteId = $("site")?.value || null;
+  const siteId = $("site")?.value || "custom";
   const site = state.sites.find((s) => s.id === siteId);
   const lat = parseFloat($("lat")?.value ?? -89.9);
   const lon = parseFloat($("lon")?.value ?? 0.0);
   const elevInput = $("elev") ? parseFloat($("elev").value) : NaN;
   const elevacao_m = !Number.isNaN(elevInput) ? elevInput : (site ? site.elevation_m : 0.0);
-  const start_date = $("start")?.value || "2027-03-01";
+  const start_date = $("start")?.value || "2026-12-20";
   const days = parseInt($("days")?.value, 10) || 30;
   const step_min = parseInt($("step")?.value, 10) || 60;
   const usar_topografia = $("use-topo") ? Boolean($("use-topo").checked) : true;
 
   return {
     site_id: site ? site.id : "custom",
-    site_name: site ? site.name : `Custom Point (${lat}°, ${lon}°)`,
+    site_name: site ? site.name : `Ponto Customizado (${lat.toFixed(2)}°, ${lon.toFixed(2)}°)`,
     lat,
     lon,
     elevacao_m,
@@ -108,12 +117,24 @@ function lerParametros() {
   };
 }
 
-/* ---------- Run Main Simulation ---------- */
+function atualizarBadgeTerreno(simData) {
+  const badge = $("terrain-badge");
+  if (!badge || !simData) return;
+  const assumps = simData.assumptions || [];
+  const linhaTerreno = assumps.find((a) => a.startsWith("Horizonte 360°"));
+  if (linhaTerreno) {
+    badge.textContent = linhaTerreno.replace("Horizonte 360° e terreno 3D: ", "").replace(/\.$/, "");
+  } else {
+    badge.textContent = simData.terrain_grid?.heights_m ? "NASA LOLA DEM" : "Modelo Sintético";
+  }
+}
+
+/* ---------- Executar Simulação Principal ---------- */
 async function rodarSimulacao(ev) {
   if (ev) ev.preventDefault();
   const submitBtn = $("scenario-form")?.querySelector('button[type="submit"]');
   if (submitBtn) submitBtn.disabled = true;
-  setStatus("Processing NASA SPICE ephemerides & LOLA terrain...");
+  setStatus("Calculando efemérides NASA SPICE e relevo LOLA...");
 
   try {
     const params = lerParametros();
@@ -133,6 +154,7 @@ async function rodarSimulacao(ev) {
     state.lastViagemData = viagemData;
     state.lastFasesData = fasesData;
 
+    atualizarBadgeTerreno(simData);
     updateSimulationUI(simData, source);
     renderElevationTimeline(simData, "chart-elevation");
     renderSkyplotPolar(simData, "chart-sky");
@@ -145,43 +167,42 @@ async function rodarSimulacao(ev) {
 
     setStatus(
       source === "online"
-        ? "Simulation complete (NASA/JPL SPICE + LRO/LOLA)."
-        : "Simulation complete (offline contingency mode)."
+        ? `Simulação concluída (passo efetivo: ${Math.round((simData.step_min || 60) / 60)}h).`
+        : "Simulação concluída em modo offline de contingência."
     );
   } catch (err) {
     console.error(err);
-    setStatus(`Simulation error: ${err.message}`, true);
+    setStatus(`Erro na simulação: ${err.message}`, true);
   } finally {
     if (submitBtn) submitBtn.disabled = false;
   }
 }
 
-/* ---------- Scenario Comparator ---------- */
+/* ---------- Comparador de Cenários ---------- */
 async function adicionarComparacao() {
   if (getComparedScenarios().length >= 6) {
-    return setStatus("Maximum limit of 6 scenarios reached.", true);
+    return setStatus("Limite máximo de 6 cenários atingido.", true);
   }
-  setStatus("Adding scenario to comparator...");
+  setStatus("Adicionando cenário ao comparador...");
   try {
     const params = lerParametros();
     const res = await simularPouso(params);
     const simData = res?.data ?? res;
 
     addScenarioToComparator(simData);
-    renderComparisonChart(getComparedScenarios(), "chart-compare");
-    setStatus("Scenario added to comparator.");
+    setStatus("Cenário adicionado ao comparador.");
   } catch (err) {
-    setStatus(`Comparison error: ${err.message}`, true);
+    setStatus(`Erro ao comparar: ${err.message}`, true);
   }
 }
 
 function limparComparacao() {
   clearComparator();
   renderComparisonChart([], "chart-compare");
-  setStatus("Comparator cleared.");
+  setStatus("Comparador limpo.");
 }
 
-/* ---------- Initialization ---------- */
+/* ---------- Inicialização ---------- */
 document.addEventListener("DOMContentLoaded", async () => {
   iniciarModo();
   await carregarSites();
@@ -190,6 +211,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   ["lat", "lon", "elev"].forEach((id) => {
     $(id)?.addEventListener("input", () => {
       if ($("site")) $("site").value = "custom";
+      const ctxEl = $("site-context");
+      if (ctxEl) ctxEl.textContent = "Coordenadas editadas manualmente.";
     });
   });
 

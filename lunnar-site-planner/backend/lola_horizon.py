@@ -1,6 +1,6 @@
 # backend/lola_horizon.py
 import numpy as np
-from scipy.ndimage import map_coordinates
+from scipy.ndimage import map_coordinates, distance_transform_edt
 
 R_LUA_M = 1_737_400.0  # raio de referência do datum LOLA
 
@@ -63,10 +63,43 @@ def horizonte_lola(lat: float, lon: float, dem_path: str,
     return horizonte_360_de_dem(z, col0_x, row0_y, pixel_m, x, y, lon, altura_obs_m, raio_m)
 
 
-def extrair_malha_terreno_lola(lat: float, lon: float, dem_path: str, grid_size: int = 64) -> dict:
+def _preencher_nan_vizinho(z: np.ndarray) -> np.ndarray:
+    """Preenche NaN com o valor válido mais próximo (evita 'penhascos' nas bordas da cobertura)."""
+    mask = np.isnan(z)
+    if not mask.any():
+        return z
+    if mask.all():
+        raise ValueError("Janela sem dados válidos no DEM LOLA.")
+    idx = distance_transform_edt(mask, return_distances=False, return_indices=True)
+    return z[tuple(idx)]
+
+
+def _amostrar_grade_local(z, col0_x, row0_y, pixel_m, x, y, lon_deg, span_m, n, order):
     """
-    Extrai uma grade local (grid_size x grid_size) do GeoTIFF LOLA ao redor do pouso
-    para renderização 3D no Three.js e cálculo real da declividade (slope_deg) no centro.
+    Amostra uma grade n x n de lado span_m no referencial LOCAL do pouso:
+    linhas vão de Norte -> Sul e colunas de Oeste -> Leste.
+    (O raster está em X/Y polar; o 'norte' local aponta para (sin lon, cos lon), então
+    sem essa rotação o relevo ficaria girado em 'lon' graus em relação ao Sol/horizonte.)
+    """
+    lam = np.radians(lon_deg)
+    off = np.linspace(-span_m / 2.0, span_m / 2.0, n)
+    leste, norte = np.meshgrid(off, off[::-1])
+    X = x + leste * np.cos(lam) + norte * np.sin(lam)
+    Y = y - leste * np.sin(lam) + norte * np.cos(lam)
+    rows = (row0_y - Y) / pixel_m
+    cols = (X - col0_x) / pixel_m
+    return map_coordinates(z, [rows, cols], order=order, mode="nearest")
+
+
+def extrair_malha_terreno_lola(lat: float, lon: float, dem_path: str, grid_size: int = 128,
+                               span_m: float = 15_360.0, far_size: int = 96,
+                               far_span_m: float = 80_000.0) -> dict:
+    """
+    Extrai duas grades do GeoTIFF LOLA para o Three.js (uma única leitura do raster):
+      - malha próxima: grid_size x grid_size cobrindo span_m (mesma área de antes: ~15,4 km),
+        reamostrada com spline cúbica (superfície suave, sem custo extra de leitura);
+      - malha distante: far_size x far_size cobrindo far_span_m (~80 km), baixa resolução.
+    Alturas em METROS relativas ao ponto de pouso (heights_m). Orientação: linha 0 = Norte, coluna 0 = Oeste.
     """
     import rasterio
     from rasterio.windows import from_bounds
@@ -74,8 +107,9 @@ def extrair_malha_terreno_lola(lat: float, lon: float, dem_path: str, grid_size:
     x, y = latlon_para_xy_polar_sul(lat, lon)
     with rasterio.open(dem_path) as src:
         pixel_m = float(src.res[0])
-        half_span = (grid_size / 2.0) * pixel_m
-        win = from_bounds(x - half_span, y - half_span, x + half_span, y + half_span, transform=src.transform)
+        # raio que contém o quadrado distante mesmo após a rotação por 'lon'
+        half = far_span_m / 2.0 * np.sqrt(2.0) + 3 * pixel_m
+        win = from_bounds(x - half, y - half, x + half, y + half, transform=src.transform)
         win = win.round_offsets().round_lengths()
         z = src.read(1, window=win, boundless=True, fill_value=np.nan).astype("float64")
         if src.nodata is not None:
@@ -83,37 +117,45 @@ def extrair_malha_terreno_lola(lat: float, lon: float, dem_path: str, grid_size:
         scale = float(src.scales[0]) if src.scales else 1.0
         offset = float(src.offsets[0]) if src.offsets else 0.0
         z = z * scale + offset
+        t = src.window_transform(win)
 
     if np.all(np.isnan(z)):
         raise ValueError("Janela sem dados válidos no DEM LOLA.")
+    z = _preencher_nan_vizinho(z)
 
-    media_z = float(np.nanmean(z))
-    z = np.where(np.isnan(z), media_z, z)
+    col0_x = t.c + 0.5 * t.a
+    row0_y = t.f + 0.5 * t.e
 
-    # Reamostra exatamente para (grid_size, grid_size) compatível com PlaneGeometry(segments = grid_size - 1)
-    rows = np.linspace(0, z.shape[0] - 1, grid_size)
-    cols = np.linspace(0, z.shape[1] - 1, grid_size)
-    rr, cc = np.meshgrid(rows, cols, indexing="ij")
-    z_grid = map_coordinates(z, [rr, cc], order=1, mode="nearest")
+    z0 = float(map_coordinates(
+        z, [[(row0_y - y) / pixel_m], [(x - col0_x) / pixel_m]], order=1, mode="nearest")[0])
 
-    # Calcula declividade real (slope em graus) via gradiente na janela central (5x5 pixels)
-    dy, dx = np.gradient(z_grid, pixel_m)
+    z_near = _amostrar_grade_local(z, col0_x, row0_y, pixel_m, x, y, lon, span_m, grid_size, order=3)
+    z_far = _amostrar_grade_local(z, col0_x, row0_y, pixel_m, x, y, lon, far_span_m, far_size, order=1)
+
+    # Declividade real (graus) no centro, via gradiente em metros
+    cell_m = span_m / (grid_size - 1)
+    dy, dx = np.gradient(z_near, cell_m)
     slope_matrix = np.degrees(np.arctan(np.hypot(dx, dy)))
     c = grid_size // 2
-    slope_deg = float(np.round(np.mean(slope_matrix[max(0, c - 2):c + 3, max(0, c - 2):c + 3]), 2))
-
-    min_elev = float(np.min(z_grid))
-    max_elev = float(np.max(z_grid))
-    span = max(1.0, max_elev - min_elev)
-    # Normaliza alturas entre -0.5 e +0.5 para o app.js escalar proporcionalmente ao relevo real
-    heights_norm = ((z_grid - np.mean(z_grid)) / span).ravel()
+    k = max(2, grid_size // 32)
+    slope_deg = float(np.round(np.mean(slope_matrix[c - k:c + k + 1, c - k:c + k + 1]), 2))
 
     return {
         "size": grid_size,
-        "pixel_m": round(pixel_m, 1),
-        "min_elevation_m": round(min_elev, 1),
-        "max_elevation_m": round(max_elev, 1),
-        "center_elevation_m": round(float(z_grid[c, c]), 1),
+        "pixel_m": round(pixel_m, 1),          # resolução nativa do DEM
+        "cell_m": round(cell_m, 1),            # espaçamento da malha enviada
+        "extent_m": round(span_m, 1),          # lado da malha em metros
+        "min_elevation_m": round(float(np.min(z_near)), 1),
+        "max_elevation_m": round(float(np.max(z_near)), 1),
+        "center_elevation_m": round(z0, 1),
         "slope_deg": slope_deg,
-        "heights": np.round(heights_norm, 4).tolist(),
+        "heights_m": np.round(z_near - z0, 1).ravel().tolist(),
+        "far_grid": {
+            "size": far_size,
+            "cell_m": round(far_span_m / (far_size - 1), 1),
+            "extent_m": round(far_span_m, 1),
+            "min_elevation_m": round(float(np.min(z_far)), 1),
+            "max_elevation_m": round(float(np.max(z_far)), 1),
+            "heights_m": np.round(z_far - z0, 1).ravel().tolist(),
+        },
     }
