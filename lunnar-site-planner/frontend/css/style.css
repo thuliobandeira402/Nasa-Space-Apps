@@ -250,7 +250,7 @@ select:focus-visible,
   border: 1px dashed var(--line);
   border-radius: 10px;
 }
-.chart:empty::after { content: "Rode uma simulação"; color: var(--muted); font-size: .85rem; }
+.chart:empty::after { content: "Run a simulation"; color: var(--muted); font-size: .85rem; }
 
 /* comparador */
 .comp-head { display: flex; justify-content: space-between; align-items: center; }
