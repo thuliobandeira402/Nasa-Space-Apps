@@ -1,5 +1,5 @@
 /**
- * Controlador principal da Aplicação Frontend (NASA Lunar Site Planner)
+ * Main Application Controller (NASA Lunar Site Planner)
  */
 
 import { PRESET_SITES, getSites, getFases, getViagem, simularPouso } from "./api.js";
@@ -10,6 +10,7 @@ import {
   syncStepMetrics,
   addScenarioToComparator,
   clearComparator,
+  getComparedScenarios,
 } from "./ui_cards.js";
 
 const $ = (id) => document.getElementById(id);
@@ -19,7 +20,6 @@ const state = {
   lastSimData: null,
   lastViagemData: null,
   lastFasesData: null,
-  scenarios: [],
 };
 
 function setStatus(msg, isError = false) {
@@ -29,7 +29,7 @@ function setStatus(msg, isError = false) {
   el.classList.toggle("error", isError);
 }
 
-/* ---------- Gestão de Modos (Engenheiro / Explorador) ---------- */
+/* ---------- Engineer / Explorer Mode ---------- */
 function definirModo(modo) {
   document.body.dataset.mode = modo;
   const radio = $(`mode-${modo}`);
@@ -52,7 +52,7 @@ function iniciarModo() {
   });
 }
 
-/* ---------- Catálogo de Locais (Via Backend /api/sites) ---------- */
+/* ---------- Site Catalog ---------- */
 async function carregarSites() {
   const res = await getSites();
   const lista = res?.data?.sites;
@@ -68,7 +68,7 @@ function popularSites() {
   if (!select) return;
   select.innerHTML =
     state.sites.map((s) => `<option value="${s.id}">${s.name}</option>`).join("") +
-    `<option value="custom">Coordenadas personalizadas (Lat/Lon)...</option>`;
+    `<option value="custom">Custom Coordinates (Lat/Lon)...</option>`;
 }
 
 function aplicarSite() {
@@ -76,38 +76,44 @@ function aplicarSite() {
   if (!select) return;
   const s = state.sites.find((x) => x.id === select.value);
   if (s) {
-    $("lat").value = s.lat;
-    $("lon").value = s.lon;
+    if ($("lat")) $("lat").value = s.lat;
+    if ($("lon")) $("lon").value = s.lon;
+    if ($("elev") && typeof s.elevation_m === "number") $("elev").value = s.elevation_m;
   }
 }
 
-/* ---------- Leitura do Formulário ---------- */
+/* ---------- Read Form Parameters ---------- */
 function lerParametros() {
   const siteId = $("site")?.value || null;
   const site = state.sites.find((s) => s.id === siteId);
-  const lat = parseFloat($("lat").value);
-  const lon = parseFloat($("lon").value);
-  const start_date = $("start").value || "2027-03-01";
-  const days = parseInt($("days").value, 10) || 30;
-  const step_min = parseInt($("step").value, 10) || 60;
+  const lat = parseFloat($("lat")?.value ?? -89.9);
+  const lon = parseFloat($("lon")?.value ?? 0.0);
+  const elevInput = $("elev") ? parseFloat($("elev").value) : NaN;
+  const elevacao_m = !Number.isNaN(elevInput) ? elevInput : (site ? site.elevation_m : 0.0);
+  const start_date = $("start")?.value || "2027-03-01";
+  const days = parseInt($("days")?.value, 10) || 30;
+  const step_min = parseInt($("step")?.value, 10) || 60;
+  const usar_topografia = $("use-topo") ? Boolean($("use-topo").checked) : true;
 
   return {
     site_id: site ? site.id : "custom",
-    site_name: site ? site.name : `Ponto (${lat}°, ${lon}°)`,
+    site_name: site ? site.name : `Custom Point (${lat}°, ${lon}°)`,
     lat,
     lon,
+    elevacao_m,
     start_date,
     days,
     step_min,
+    usar_topografia,
   };
 }
 
-/* ---------- Execução da Simulação Principal ---------- */
+/* ---------- Run Main Simulation ---------- */
 async function rodarSimulacao(ev) {
   if (ev) ev.preventDefault();
   const submitBtn = $("scenario-form")?.querySelector('button[type="submit"]');
   if (submitBtn) submitBtn.disabled = true;
-  setStatus("Processando efemérides NASA SPICE e malha LOLA...");
+  setStatus("Processing NASA SPICE ephemerides & LOLA terrain...");
 
   try {
     const params = lerParametros();
@@ -139,51 +145,49 @@ async function rodarSimulacao(ev) {
 
     setStatus(
       source === "online"
-        ? "Simulação concluída com dados reais (NASA/JPL SPICE + LRO/LOLA)."
-        : "Simulação concluída (modo contingência offline ativo)."
+        ? "Simulation complete (NASA/JPL SPICE + LRO/LOLA)."
+        : "Simulation complete (offline contingency mode)."
     );
   } catch (err) {
     console.error(err);
-    setStatus(`Erro na simulação: ${err.message}`, true);
+    setStatus(`Simulation error: ${err.message}`, true);
   } finally {
     if (submitBtn) submitBtn.disabled = false;
   }
 }
 
-/* ---------- Comparador de Cenários ---------- */
+/* ---------- Scenario Comparator ---------- */
 async function adicionarComparacao() {
-  if (state.scenarios.length >= 6) {
-    return setStatus("Limite máximo de 6 cenários atingido.", true);
+  if (getComparedScenarios().length >= 6) {
+    return setStatus("Maximum limit of 6 scenarios reached.", true);
   }
-  setStatus("Adicionando cenário ao comparador...");
+  setStatus("Adding scenario to comparator...");
   try {
     const params = lerParametros();
     const res = await simularPouso(params);
     const simData = res?.data ?? res;
 
-    state.scenarios.push(simData);
     addScenarioToComparator(simData);
-    renderComparisonChart(state.scenarios, "chart-compare");
-    setStatus("Cenário adicionado com sucesso.");
+    renderComparisonChart(getComparedScenarios(), "chart-compare");
+    setStatus("Scenario added to comparator.");
   } catch (err) {
-    setStatus(`Falha ao comparar: ${err.message}`, true);
+    setStatus(`Comparison error: ${err.message}`, true);
   }
 }
 
 function limparComparacao() {
-  state.scenarios = [];
   clearComparator();
   renderComparisonChart([], "chart-compare");
-  setStatus("Comparador limpo.");
+  setStatus("Comparator cleared.");
 }
 
-/* ---------- Inicialização ---------- */
+/* ---------- Initialization ---------- */
 document.addEventListener("DOMContentLoaded", async () => {
   iniciarModo();
   await carregarSites();
 
   $("site")?.addEventListener("change", aplicarSite);
-  ["lat", "lon"].forEach((id) => {
+  ["lat", "lon", "elev"].forEach((id) => {
     $(id)?.addEventListener("input", () => {
       if ($("site")) $("site").value = "custom";
     });

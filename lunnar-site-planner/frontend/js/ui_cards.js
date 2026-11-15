@@ -1,6 +1,5 @@
 /**
- * Módulo de UI Cards, Countdowns em Tempo Real e Tabela Comparadora
- * Alinhado aos IDs originais do index.html
+ * UI Cards, Live Countdowns, and Scenario Comparator Table
  */
 
 import { renderComparisonChart } from './charts.js';
@@ -29,10 +28,6 @@ function formatCountdown(ms) {
   return days > 0 ? `${days}d ${pad(hours)}h ${pad(mins)}m` : `${pad(hours)}:${pad(mins)}:${pad(secs)}`;
 }
 
-/**
- * Encontra o timestamp da próxima transição (Sunset/Sunrise ou Earthset/Earthrise)
- * a partir do passo atual.
- */
 function findNextTransitionMs(timeline, fromIdx, selector) {
   if (!timeline || timeline.length < 2) return null;
   const currentState = Boolean(selector(timeline[fromIdx]));
@@ -49,9 +44,26 @@ function findNextTransitionMs(timeline, fromIdx, selector) {
   return null;
 }
 
-/**
- * Atualiza todos os cards de KPI, critérios GO/NO-GO e premissas do HTML.
- */
+function buildEnglishAssumptions(simData) {
+  const m = simData.metricas_resumo;
+  const stepH = Math.round((simData.step_min || 60) / 60);
+  const slopeTxt = typeof simData.slope_deg === 'number' ? `${simData.slope_deg}°` : 'N/A';
+
+  const items = [
+    `Lunar Ephemerides & Orientation: NASA/JPL SPICE (DE421, MOON_ME_DE421 frame), ${stepH}h integration step.`,
+    `360° Horizon & 3D Terrain: NASA LRO/LOLA Digital Elevation Model (Local slope: ${slopeTxt}).`,
+    `Apparent Solar Disc: 0.265° semidiameter without atmospheric refraction.`,
+    `GO Criteria: Solar illumination ≥ 50%, Direct-to-Earth (DTE) visibility ≥ 50%, and terrain slope ≤ 15°.`,
+  ];
+
+  if (m) {
+    items.push(
+      `Engineering Summary: Accounting for local terrain, the Sun illuminates the site for ${m.iluminacao_solar_pct}% of the window (topographic shadow loss: ${m.perda_sombra_topografica_pct}%). Max solar elevation is ${m.elevacao_max_sol_graus}°, yielding ${m.potencia_media_painel_vertical_pct}% average efficiency on vertical solar arrays vs. ${m.potencia_media_painel_horizontal_pct}% on horizontal panels. Round-trip Earth signal latency: ${m.latencia_ida_volta_seg}s.`
+    );
+  }
+  return items;
+}
+
 export function updateSimulationUI(simData, source = 'online') {
   uiState.simData = simData;
   uiState.currentStepIdx = 0;
@@ -59,43 +71,29 @@ export function updateSimulationUI(simData, source = 'online') {
 
   if (!simData) return;
 
-  // 1. Frações globais e maior noite contínua
   setText('m-sun-frac', `${simData.sun_fraction_pct}%`);
   setText('m-earth-frac', `${simData.earth_fraction_pct}%`);
   setText('m-dark', `${simData.max_continuous_night_hours} h`);
 
-  // 2. Explicação amigável para o Modo Explorador (#explainer)
   const explainer = document.getElementById('explainer');
   if (explainer) {
+    const slopeTxt = typeof simData.slope_deg === 'number' ? `${simData.slope_deg}°` : 'N/A';
     explainer.innerHTML =
       simData.go_nogo === 'GO'
-        ? `<strong>${simData.site_name}:</strong> Local favorável (<strong>GO</strong>)! O Sol ilumina o terreno por <strong>${simData.sun_fraction_pct}%</strong> do período e a Terra fica visível por <strong>${simData.earth_fraction_pct}%</strong>.`
-        : `<strong>${simData.site_name}:</strong> Atenção (<strong>NO-GO</strong>). Verifique a declividade (${simData.slope_deg}°) ou períodos longos de sombra (${simData.max_continuous_night_hours}h).`;
+        ? `<strong>${simData.site_name}:</strong> Favorable landing site (<strong>GO</strong>)! The Sun illuminates the surface for <strong>${simData.sun_fraction_pct}%</strong> of the mission window and Earth remains visible for <strong>${simData.earth_fraction_pct}%</strong>.`
+        : `<strong>${simData.site_name}:</strong> Mission constraints not met (<strong>NO-GO</strong>). Check terrain slope (${slopeTxt}) or extended shadow periods (${simData.max_continuous_night_hours}h max continuous night).`;
   }
 
-  // 3. Lista de premissas técnicas (#assumptions)
   const assumptionsList = document.getElementById('assumptions');
-  if (assumptionsList && Array.isArray(simData.assumptions)) {
-    assumptionsList.innerHTML = simData.assumptions.map((item) => `<li>${item}</li>`).join('');
+  if (assumptionsList) {
+    const list = buildEnglishAssumptions(simData);
+    assumptionsList.innerHTML = list.map((item) => `<li>${item}</li>`).join('');
   }
 
-  // 4. Status na barra lateral (#status)
-  setText(
-    'status',
-    source === 'online'
-      ? `Simulação concluída via FastAPI (${simData.site_name}).`
-      : `Simulação concluída em modo offline (${simData.site_name}).`
-  );
-
-  // 5. Atualiza estado instantâneo (GO/NO-GO + Countdowns)
   syncStepMetrics(0);
   startLiveCountdownTimer();
 }
 
-/**
- * Atualiza o card de veredito GO/NO-GO e os textos de próximo Sunset/Earthset
- * conforme o índice selecionado no Slider de Tempo ou clique no gráfico.
- */
 export function syncStepMetrics(stepIndex = 0) {
   const simData = uiState.simData;
   if (!simData || !Array.isArray(simData.timeline) || simData.timeline.length === 0) return;
@@ -106,11 +104,11 @@ export function syncStepMetrics(stepIndex = 0) {
 
   const frame = simData.timeline[safeIdx];
   const slopeKnown = typeof simData.slope_deg === 'number';
-  const slopeOk = !slopeKnown || simData.slope_deg <= 15.0;  const sunOk = frame.sun_visible;
+  const slopeOk = !slopeKnown || simData.slope_deg <= 15.0;
+  const sunOk = frame.sun_visible;
   const commOk = frame.earth_visible;
   const instantGo = slopeOk && sunOk && commOk;
 
-  // Card de Veredito (#card-verdict, #verdict-text, #verdict-checks)
   const cardVerdict = document.getElementById('card-verdict');
   if (cardVerdict) {
     cardVerdict.dataset.state = instantGo ? 'go' : 'nogo';
@@ -126,9 +124,9 @@ export function syncStepMetrics(stepIndex = 0) {
   const checksList = document.getElementById('verdict-checks');
   if (checksList) {
     checksList.innerHTML = `
-      <li>${slopeKnown ? (slopeOk ? '✅' : '❌') : '➖'} Topografia (Slope): <strong>${slopeKnown ? simData.slope_deg + '°' : 'sem dado'}</strong> (máx. 15°)</li>
-      <li>${sunOk ? '✅' : '❌'} Sol agora: <strong>${frame.sun_elevation_deg}°</strong></li>
-      <li>${commOk ? '✅' : '❌'} Sinal Terra (DTE): <strong>${frame.earth_elevation_deg}°</strong></li>
+      <li>${slopeKnown ? (slopeOk ? '✅' : '❌') : '➖'} Terrain Slope: <strong>${slopeKnown ? simData.slope_deg + '°' : 'N/A'}</strong> (max 15°)</li>
+      <li>${sunOk ? '✅' : '❌'} Sun Elevation Now: <strong>${frame.sun_elevation_deg}°</strong></li>
+      <li>${commOk ? '✅' : '❌'} Earth Signal (DTE): <strong>${frame.earth_elevation_deg}°</strong></li>
     `;
   }
 
@@ -145,24 +143,22 @@ function refreshCountdownsOnly() {
   const elapsedRealMs = Date.now() - uiState.anchorWallMs;
   const currentSimMs = baseSimMs + elapsedRealMs;
 
-  // Countdown Sunset / Sunrise (#m-sun-next)
   const nextSun = findNextTransitionMs(timeline, idx, (pt) => pt.sun_visible);
   if (nextSun) {
     const remaining = nextSun.targetMs - currentSimMs;
-    const label = nextSun.willBeVisible ? 'Sunrise em' : 'Sunset em';
+    const label = nextSun.willBeVisible ? 'Sunrise in' : 'Sunset in';
     setText('m-sun-next', `${label}: ${formatCountdown(remaining)}`);
   } else {
-    setText('m-sun-next', timeline[idx].sun_visible ? 'Iluminação contínua na janela' : 'Sombra contínua na janela');
+    setText('m-sun-next', timeline[idx].sun_visible ? 'Continuous sunlight in window' : 'Continuous shadow in window');
   }
 
-  // Countdown Earthset / Earthrise (#m-earth-next)
   const nextEarth = findNextTransitionMs(timeline, idx, (pt) => pt.earth_visible);
   if (nextEarth) {
     const remaining = nextEarth.targetMs - currentSimMs;
-    const label = nextEarth.willBeVisible ? 'Earthrise em' : 'Earthset em';
+    const label = nextEarth.willBeVisible ? 'Earthrise in' : 'Earthset in';
     setText('m-earth-next', `${label}: ${formatCountdown(remaining)}`);
   } else {
-    setText('m-earth-next', timeline[idx].earth_visible ? 'Visada Terra contínua' : 'Sem visada Terra na janela');
+    setText('m-earth-next', timeline[idx].earth_visible ? 'Continuous Earth DTE link' : 'No direct Earth link in window');
   }
 }
 
@@ -171,9 +167,9 @@ function startLiveCountdownTimer() {
   uiState.timerId = window.setInterval(refreshCountdownsOnly, 1000);
 }
 
-// ============================================================================
-// GERENCIAMENTO DA TABELA COMPARADORA (#comp-table)
-// ============================================================================
+export function getComparedScenarios() {
+  return uiState.comparedList;
+}
 
 export function addScenarioToComparator(simData) {
   if (!simData) return;
@@ -211,7 +207,7 @@ function renderComparatorTable() {
         <td>${item.sun_fraction_pct}%</td>
         <td>${item.earth_fraction_pct}%</td>
         <td class="only-engineer">${item.max_continuous_night_hours} h</td>
-        <td><button type="button" class="btn small" data-remove-idx="${index}" aria-label="Remover cenário">✕</button></td>
+        <td><button type="button" class="btn small" data-remove-idx="${index}" aria-label="Remove scenario">✕</button></td>
       </tr>
     `
     )
