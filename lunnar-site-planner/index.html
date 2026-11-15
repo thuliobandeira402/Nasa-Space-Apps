@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lunar Site Planner · NASA Space Apps</title>
+  <meta name="description" content="Compare landing sites and dates at the lunar south pole: Sun, Earth, power, and communications.">
+
+  <script>
+    window.LUNAR_API_CONFIG = {
+      BASE_URL: window.location.port && window.location.port !== '8000'
+        ? 'http://127.0.0.1:8000'
+        : '',
+      ENDPOINTS: {
+        SITES: '/api/sites',
+        FASES: '/api/fases',
+        VIAGEM: '/api/viagem',
+        SIMULAR_POUSO: '/simular-pouso'
+      }
+    };
+  </script>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.3.1",
+        "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+        "htm": "https://esm.sh/htm@3.1.1",
+        "three": "https://esm.sh/three@0.169.0",
+        "three/addons/": "https://esm.sh/three@0.169.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      corePlugins: {
+        preflight: false
+      }
+    };
+  </script>
+
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" defer></script>
+  <script type="module" src="js/main.js"></script>
+</head>
+<body data-mode="engineer">
+  <a class="skip" href="#resultados">Skip to results</a>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">☾</span>
+      <div>
+        <h1>Lunar Site Planner</h1>
+        <p class="tagline">Sun, Earth, and landing feasibility at the lunar south pole</p>
+      </div>
+    </div>
+
+    <fieldset class="mode-switch" aria-label="User profile">
+      <legend class="sr-only">User profile</legend>
+      <input type="radio" name="mode" id="mode-engineer" value="engineer" checked>
+      <label for="mode-engineer">🛠️ Engineer Mode</label>
+      <input type="radio" name="mode" id="mode-explorer" value="explorer">
+      <label for="mode-explorer">🚀 Explorer Mode</label>
+    </fieldset>
+  </header>
+
+  <main class="layout">
+    <!-- Control Panel -->
+    <aside class="panel controls" aria-labelledby="h-controles">
+      <h2 id="h-controles">Scenario</h2>
+      <form id="scenario-form" autocomplete="off">
+        <label for="site">Landing site</label>
+        <select id="site" name="site"></select>
+        <p id="site-context" class="hint" style="margin-top: .4rem; line-height: 1.35;"></p>
+
+        <div class="row only-engineer">
+          <div>
+            <label for="lat">Latitude (°)</label>
+            <input id="lat" name="lat" type="number" step="0.001" min="-90" max="90" value="-89.9">
+          </div>
+          <div>
+            <label for="lon">Longitude (°)</label>
+            <input id="lon" name="lon" type="number" step="0.001" min="-180" max="180" value="0">
+          </div>
+        </div>
+
+        <div class="only-engineer">
+          <label for="elev">Ref. elevation (m)</label>
+          <input id="elev" name="elev" type="number" step="10" min="-10000" max="15000" value="1500">
+        </div>
+
+        <label for="start">Start date (UTC)</label>
+        <input id="start" name="start" type="date" value="2026-12-20">
+
+        <div class="row">
+          <div>
+            <label for="days">Duration (days)</label>
+            <input id="days" name="days" type="number" min="1" max="90" value="30">
+          </div>
+          <div class="only-engineer">
+            <label for="step">Step (min)</label>
+            <input id="step" name="step" type="number" min="60" max="1440" step="60" value="60">
+          </div>
+        </div>
+
+        <div class="only-engineer" style="margin-top: .75rem;">
+          <label for="use-topo" style="display: inline-flex; align-items: center; gap: .45rem; cursor: pointer; margin: 0;">
+            <input id="use-topo" name="use-topo" type="checkbox" checked style="width: auto; accent-color: var(--accent);">
+            <span>Apply 360° topography (LRO/LOLA)</span>
+          </label>
+        </div>
+
+        <div class="actions">
+          <button type="submit" class="btn primary">Simulate</button>
+          <button type="button" id="btn-add" class="btn">+ Add to comparison</button>
+        </div>
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+      </form>
+    </aside>
+
+    <!-- Results -->
+    <section id="resultados" class="results" aria-labelledby="h-resultados">
+      <h2 id="h-resultados" class="sr-only">Simulation results</h2>
+
+      <!-- KPI Cards -->
+      <div class="cards" id="cards">
+        <article class="card verdict" id="card-verdict" data-state="idle">
+          <h3>Mission Feasibility</h3>
+          <p class="big" id="verdict-text">—</p>
+          <p class="hint" id="verdict-sub">—</p>
+          <ul class="checks only-engineer" id="verdict-checks"></ul>
+        </article>
+        <article class="card">
+          <h3>☀️ Solar Illumination</h3>
+          <p class="big" id="m-sun-frac">—</p>
+          <p class="hint" id="m-sun-next">—</p>
+          <p class="hint only-engineer" id="m-sun-power">—</p>
+        </article>
+        <article class="card">
+          <h3>🌍 Earth Visibility (DTE)</h3>
+          <p class="big" id="m-earth-frac">—</p>
+          <p class="hint" id="m-earth-next">—</p>
+          <p class="hint only-engineer" id="m-earth-lat">—</p>
+        </article>
+        <article class="card only-engineer">
+          <h3>🌑 Longest Continuous Night</h3>
+          <p class="big" id="m-dark">—</p>
+          <p class="hint" id="m-dark-sub">No Sun above local horizon</p>
+        </article>
+      </div>
+
+      <p class="explainer only-explorer" id="explainer">
+        Select a landing site and date, then click <strong>Simulate</strong>.
+      </p>
+
+      <!-- 3D Viewport (React + Three.js) -->
+      <section class="panel" aria-labelledby="h-sim3d">
+        <div class="comp-head" style="margin-bottom: .25rem;">
+          <h3 id="h-sim3d">3D Orbital &amp; Topographic Simulation</h3>
+          <span id="terrain-badge" class="hint font-mono"></span>
+        </div>
+        <p class="hint only-explorer">Switch between the Earth → Moon trajectory, the lunar globe, and the local surface view.</p>
+        <div id="react-3d-root"></div>
+      </section>
+
+      <div class="charts">
+        <section class="panel chart-panel" aria-labelledby="h-elev">
+          <h3 id="h-elev">Sun &amp; Earth Elevation Over Time</h3>
+          <p class="hint only-explorer">When the Sun curve rises above the terrain mask, direct sunlight reaches the surface.</p>
+          <div id="chart-elevation" class="chart" role="img" aria-label="Elevation over time chart"></div>
+        </section>
+
+        <section class="panel chart-panel" aria-labelledby="h-sky">
+          <h3 id="h-sky">Horizon Skyplot (Azimuth × Elevation)</h3>
+          <p class="hint only-explorer">Local sky view from the landing site. Grazing solar angles are characteristic of the south pole.</p>
+          <div id="chart-sky" class="chart" role="img" aria-label="Sun and Earth trajectory in the local sky"></div>
+        </section>
+      </div>
+
+      <section class="panel comparator" aria-labelledby="h-comp">
+        <div class="comp-head">
+          <h3 id="h-comp">Scenario Comparator</h3>
+          <button type="button" id="btn-clear" class="btn small">Clear</button>
+        </div>
+        <p class="hint" id="comp-empty">Add 2 or more scenarios (different sites or dates) to compare.</p>
+        <div class="table-wrap">
+          <table id="comp-table" hidden>
+            <thead>
+              <tr>
+                <th scope="col">Scenario</th>
+                <th scope="col">Verdict</th>
+                <th scope="col">☀️ Sun</th>
+                <th scope="col">🌍 Earth</th>
+                <th scope="col" class="only-engineer">Max Night</th>
+                <th scope="col"><span class="sr-only">Remove</span></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div id="chart-compare" class="chart short" role="img" aria-label="Solar illumination and Earth visibility comparison" hidden></div>
+      </section>
+
+      <section class="panel only-engineer" aria-labelledby="h-assump">
+        <h3 id="h-assump">Engineering Assumptions &amp; Summary</h3>
+        <ul id="assumptions" class="plain"></ul>
+      </section>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>Data: NASA/JPL SPICE (DE421, MOON_ME_DE421) and LRO/LOLA DEM. Built for the NASA Space Apps Challenge 2026.</p>
+  </footer>
+</body>
+</html>
