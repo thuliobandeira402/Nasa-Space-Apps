@@ -173,7 +173,6 @@ function createStarfield(count = 3200, minRadius = 120, maxRadius = 240) {
 }
 
 // Constrói o anel de horizonte distante de 40 km do LOLA ao redor da malha local
-// para mostrar fisicamente montanhas distantes que bloqueiam Sol ou Terra
 function buildHorizonRidgeMesh(horizonProfile = [], radius = 24, baseY = -1.5) {
   const group = new THREE.Group();
   if (!Array.isArray(horizonProfile) || horizonProfile.length < 3) {
@@ -368,6 +367,37 @@ function buildLunarLanderMesh() {
   return { group, body, panelMat, padRing };
 }
 
+// Constrói o grupo visual de bloqueio de comunicação ("⛰️ Terrain blocking communication")
+function buildCommBlockIndicator(sphereRadius = 0.18, glowScale = 1.6, badgeOffsetY = 0.85) {
+  const commBlockGroup = new THREE.Group();
+  commBlockGroup.visible = false;
+
+  const hitSphere = new THREE.Mesh(
+    new THREE.SphereGeometry(sphereRadius, 16, 16),
+    new THREE.MeshBasicMaterial({ color: 0xff5c7a })
+  );
+  const hitGlow = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: createGlowTexture('rgba(255, 92, 122, 0.95)', 'rgba(239, 68, 68, 0.45)'),
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  hitGlow.scale.set(glowScale, glowScale, 1);
+
+  const blockBadge = createLabelSprite(
+    '⛰️ Terrain blocking communication',
+    '#ff5c7a',
+    'rgba(28, 8, 18, 0.92)',
+    0.034
+  );
+  blockBadge.position.set(0, badgeOffsetY, 0);
+
+  commBlockGroup.add(hitSphere, hitGlow, blockBadge);
+  return commBlockGroup;
+}
+
 function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
   const [viewMode, setViewMode] = useState('superficie'); // 'viagem' | 'globo' | 'superficie'
   const [colorMode, setColorMode] = useState('natural');  // 'natural' | 'elevation' | 'slope'
@@ -379,6 +409,7 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
   const raycasterRef = useRef(new THREE.Raycaster());
   const sceneObjectsRef = useRef({
     viewMode: 'superficie',
+    globeMesh: null,
     terrainGeo: null,
     terrainMesh: null,
     horizonBeltGroup: null,
@@ -551,6 +582,7 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
 
     const refs = {
       viewMode,
+      globeMesh: null,
       terrainGeo: null,
       terrainMesh: null,
       horizonBeltGroup: null,
@@ -660,8 +692,11 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
         metalness: 0.02,
       });
 
-      const globe = new THREE.Mesh(new THREE.SphereGeometry(2.2, 96, 96), globeMat);
+      const globeGeo = new THREE.SphereGeometry(2.2, 96, 96);
+      globeGeo.computeBoundingSphere();
+      const globe = new THREE.Mesh(globeGeo, globeMat);
       scene.add(globe);
+      refs.globeMesh = globe;
 
       const texLoader = new THREE.TextureLoader();
       texLoader.load(
@@ -692,7 +727,7 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       const siteLon = simData?.lon ?? 0.0;
       const latRad = THREE.MathUtils.degToRad(siteLat);
       const lonRad = THREE.MathUtils.degToRad(siteLon);
-      const r = 2.24;
+      const r = 2.23;
       const pinPos = new THREE.Vector3(
         r * Math.cos(latRad) * Math.cos(lonRad),
         r * Math.sin(latRad),
@@ -774,15 +809,18 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       refs.earthGroup = earthGroup;
 
       const commBeamGroup = new THREE.Group();
-      const commLineMat = new THREE.LineBasicMaterial({
+      const commLineMat = new THREE.LineDashedMaterial({
         color: 0x3ddc97,
+        dashSize: 0.25,
+        gapSize: 0.14,
         transparent: true,
-        opacity: 0.6,
+        opacity: 0.75,
       });
       const commLine = new THREE.Line(
         new THREE.BufferGeometry().setFromPoints([pinPos, earthInitPos]),
         commLineMat
       );
+      commLine.computeLineDistances();
       commBeamGroup.add(commLine);
 
       const pulseGeo = new THREE.SphereGeometry(0.055, 10, 10);
@@ -798,6 +836,11 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       refs.commPulses = commPulses;
       refs.commLineMat = commLineMat;
       refs.commLine = commLine;
+
+      // Marcador 3D no Globo indicando onde o terreno/curvatura lunar bloqueia a comunicação com a Terra
+      const commBlockGroup = buildCommBlockIndicator(0.095, 0.9, 0.45);
+      scene.add(commBlockGroup);
+      refs.commBlockGroup = commBlockGroup;
     } else {
       // MODO 3: RELEVO REAL LOLA + CORDILHEIRA 360° + VETORES ANCORADOS NA SONDA
       const grid = simData?.terrain_grid;
@@ -866,7 +909,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       refs.landerPadRing = landerObj.padRing;
       refs.landerTopPos = new THREE.Vector3(0, centerZ + 0.72, 0);
 
-      // Silhueta 3D da Cordilheira do Horizonte (40 km LOLA) ancorada no nível da sonda
       const horizonObj = buildHorizonRidgeMesh(simData?.horizon_profile || [], 24, -2.5);
       horizonObj.group.position.y = centerZ + 0.72;
       horizonObj.group.scale.set(1, vertExag, 1);
@@ -879,7 +921,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       scene.add(landerLight);
       refs.landerLight = landerLight;
 
-      // Posições iniciais do Sol e da Terra ancoradas na altura da antena do Lander (landerTopPos)!
       const sunInitVisual = refs.landerTopPos.clone().add(azElToVector3(initSunAz, initSunEl * vertExag, 34));
       const earthInitVisual = refs.landerTopPos.clone().add(azElToVector3(initEarthAz, initEarthEl * vertExag, 30));
       refs.sunVisualTargetPos.copy(sunInitVisual);
@@ -887,7 +928,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       refs.earthCurrentPos.copy(earthInitVisual);
       refs.commBeamEndPos.copy(earthInitVisual);
 
-      // Sol no Céu + Rótulo "☀️ SUN" compacto e legível
       const sunGroup = new THREE.Group();
       sunGroup.position.copy(sunInitVisual);
       const sunSphere = new THREE.Mesh(
@@ -910,7 +950,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       scene.add(sunGroup);
       refs.sunMesh = sunGroup;
 
-      // Terra no Céu + Rótulo "🌍 EARTH" compacto e legível
       const earthGroup = new THREE.Group();
       earthGroup.position.copy(earthInitVisual);
       const earthSphere = new THREE.Mesh(
@@ -937,7 +976,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       scene.add(earthGroup);
       refs.earthGroup = earthGroup;
 
-      // Feixe de Comunicação DTE (Lander <-> Terra ou até o ponto real de colisão no relevo)
       const commBeamGroup = new THREE.Group();
       const commLineMat = new THREE.LineDashedMaterial({
         color: 0x3ddc97,
@@ -968,33 +1006,7 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       refs.commLineMat = commLineMat;
       refs.commLine = commLine;
 
-      // Marcador 3D Compacto no Ponto Exato onde a Montanha intercepta o Feixe Terra-Sonda
-      const commBlockGroup = new THREE.Group();
-      commBlockGroup.visible = false;
-
-      const hitSphere = new THREE.Mesh(
-        new THREE.SphereGeometry(0.2, 16, 16),
-        new THREE.MeshBasicMaterial({ color: 0xff5c7a })
-      );
-      const hitGlow = new THREE.Sprite(
-        new THREE.SpriteMaterial({
-          map: createGlowTexture('rgba(255, 92, 122, 0.95)', 'rgba(239, 68, 68, 0.45)'),
-          transparent: true,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-        })
-      );
-      hitGlow.scale.set(1.8, 1.8, 1);
-
-      const blockBadge = createLabelSprite(
-        '⛰️ Terrain blocking communication',
-        '#ff5c7a',
-        'rgba(28, 8, 18, 0.92)',
-        0.034
-      );
-      blockBadge.position.set(0, 0.95, 0);
-
-      commBlockGroup.add(hitSphere, hitGlow, blockBadge);
+      const commBlockGroup = buildCommBlockIndicator(0.2, 1.8, 0.95);
       scene.add(commBlockGroup);
       refs.commBlockGroup = commBlockGroup;
     }
@@ -1034,30 +1046,45 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
 
         const originPt = r.viewMode === 'globo' ? r.globePinPos : r.landerTopPos;
 
-        // No Modo 3, lança o raio EXATAMENTE na linha reta Sonda -> Terra contra a malha local e o anel de horizonte
-        if (r.viewMode === 'superficie' && !r.earthVisibleNow && r.terrainMesh) {
-          r.terrainMesh.updateMatrixWorld();
-          if (r.horizonWallMesh) r.horizonWallMesh.updateMatrixWorld();
+        if (!r.earthVisibleNow) {
+          if (r.viewMode === 'superficie' && r.terrainMesh) {
+            r.terrainMesh.updateMatrixWorld();
+            if (r.horizonWallMesh) r.horizonWallMesh.updateMatrixWorld();
 
-          const vecToEarth = r.earthCurrentPos.clone().sub(originPt);
-          const distToEarth = vecToEarth.length();
-          const dirToEarth = vecToEarth.clone().normalize();
+            const vecToEarth = r.earthCurrentPos.clone().sub(originPt);
+            const distToEarth = vecToEarth.length();
+            const dirToEarth = vecToEarth.clone().normalize();
 
-          const raycaster = raycasterRef.current;
-          raycaster.set(originPt, dirToEarth);
+            const raycaster = raycasterRef.current;
+            raycaster.set(originPt, dirToEarth);
 
-          const obstacles = [r.terrainMesh];
-          if (r.horizonWallMesh) obstacles.push(r.horizonWallMesh);
+            const obstacles = [r.terrainMesh];
+            if (r.horizonWallMesh) obstacles.push(r.horizonWallMesh);
 
-          const hits = raycaster.intersectObjects(obstacles, false);
-          const validHit = hits.find((h) => h.distance > 0.45 && h.distance < distToEarth - 0.5);
+            const hits = raycaster.intersectObjects(obstacles, false);
+            const validHit = hits.find((h) => h.distance > 0.45 && h.distance < distToEarth - 0.5);
 
-          if (validHit) {
-            r.commBeamEndPos.copy(validHit.point);
-          } else {
-            // Se a Terra está abaixo de 0° (atrás da curvatura lunar / horizonte distante), crava na crista do horizonte
-            const hitDist = Math.min(23.5, distToEarth * 0.78);
-            r.commBeamEndPos.copy(originPt).addScaledVector(dirToEarth, hitDist);
+            if (validHit) {
+              r.commBeamEndPos.copy(validHit.point);
+            } else {
+              const hitDist = Math.min(23.5, distToEarth * 0.78);
+              r.commBeamEndPos.copy(originPt).addScaledVector(dirToEarth, hitDist);
+            }
+          } else if (r.viewMode === 'globo') {
+            // No Modo 2 (3D Globe), calcula o ponto na borda/horizonte do globo onde o relevo lunar bloqueia a visada para a Terra
+            const dirToEarth = r.earthCurrentPos.clone().sub(originPt).normalize();
+            const upNormal = originPt.clone().normalize();
+            // Tangente ao horizonte local na direção da Terra a ~0.85 radianos do pino
+            const tangentDir = dirToEarth
+              .clone()
+              .sub(upNormal.clone().multiplyScalar(dirToEarth.dot(upNormal)))
+              .normalize();
+            const horizonBlockPt = originPt
+              .clone()
+              .addScaledVector(tangentDir, 0.55)
+              .normalize()
+              .multiplyScalar(2.24);
+            r.commBeamEndPos.copy(horizonBlockPt);
           }
 
           if (r.commBlockGroup) {
@@ -1157,7 +1184,7 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       if (refs.commLineMat) {
         const beamColor = earthVisible ? 0x3ddc97 : 0xff5c7a;
         refs.commLineMat.color.setHex(beamColor);
-        refs.commLineMat.opacity = earthVisible ? 0.7 : 0.25;
+        refs.commLineMat.opacity = earthVisible ? 0.75 : 0.8;
         refs.commPulses.forEach((p) => p.material.color.setHex(beamColor));
       }
 
@@ -1170,7 +1197,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
         refs.globePin.material.color.setHex(instantColor);
       }
     } else {
-      // MODO 3 (LOCAL SURFACE): Elevação escalada com vertExag e ancorada em landerTopPos para geometria visual 100% coerente!
       const discFrac = solarDiscIlluminatedFraction(sunElev, maskElev);
       const lightEl = Math.max(2.2, sunElev * vertExag + 2.0);
       const sunLightPos = refs.landerTopPos.clone().add(azElToVector3(sunAz, lightEl, 42));
@@ -1183,7 +1209,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       const sunVisualPos = refs.landerTopPos.clone().add(azElToVector3(sunAz, sunElev * vertExag, 34));
       refs.sunVisualTargetPos.copy(sunVisualPos);
 
-      // Quando bloqueada pela montanha, garante que a Terra fique visualmente na elevação real atrás da crista
       const visualEarthEl = !earthVisible
         ? Math.min(earthElev, earthMaskElev - 0.6) * vertExag
         : earthElev * vertExag;
