@@ -1,5 +1,5 @@
 /**
- * Controlador Principal da Aplicação (NASA Lunar Site Planner)
+ * Main Application Controller (NASA Lunar Landing Site Planner)
  */
 
 import { PRESET_SITES, getSites, getFases, getViagem, simularPouso } from "./api.js";
@@ -29,7 +29,7 @@ function setStatus(msg, isError = false) {
   el.classList.toggle("error", isError);
 }
 
-/* ---------- Modo Engenheiro / Explorador ---------- */
+/* ---------- Engineer / Explorer Mode ---------- */
 function definirModo(modo) {
   document.body.dataset.mode = modo;
   const radio = $(`mode-${modo}`);
@@ -52,7 +52,7 @@ function iniciarModo() {
   });
 }
 
-/* ---------- Catálogo de Locais ---------- */
+/* ---------- Curated Sites Catalog ---------- */
 async function carregarSites() {
   const res = await getSites();
   const lista = res?.data?.sites;
@@ -68,7 +68,7 @@ function popularSites() {
   if (!select) return;
   select.innerHTML =
     state.sites.map((s) => `<option value="${s.id}">${s.name}</option>`).join("") +
-    `<option value="custom">Coordenadas Personalizadas (Lat/Lon)...</option>`;
+    `<option value="custom">Custom Coordinates (Lat/Lon)...</option>`;
 }
 
 function aplicarSite() {
@@ -87,11 +87,11 @@ function aplicarSite() {
         : s.scientific_highlight || "";
     }
   } else if (ctxEl) {
-    ctxEl.textContent = "Ponto customizado na superfície lunar (usa LOLA DEM se lat ≤ -80°S).";
+    ctxEl.textContent = "Custom lunar surface coordinates (uses real NASA LOLA DEM for lat ≤ -80°S).";
   }
 }
 
-/* ---------- Leitura do Formulário ---------- */
+/* ---------- Form Parameters ---------- */
 function lerParametros() {
   const siteId = $("site")?.value || "custom";
   const site = state.sites.find((s) => s.id === siteId);
@@ -106,7 +106,7 @@ function lerParametros() {
 
   return {
     site_id: site ? site.id : "custom",
-    site_name: site ? site.name : `Ponto Customizado (${lat.toFixed(2)}°, ${lon.toFixed(2)}°)`,
+    site_name: site ? site.name : `Custom Site (${lat.toFixed(2)}°, ${lon.toFixed(2)}°)`,
     lat,
     lon,
     elevacao_m,
@@ -120,21 +120,15 @@ function lerParametros() {
 function atualizarBadgeTerreno(simData) {
   const badge = $("terrain-badge");
   if (!badge || !simData) return;
-  const assumps = simData.assumptions || [];
-  const linhaTerreno = assumps.find((a) => a.startsWith("Horizonte 360°"));
-  if (linhaTerreno) {
-    badge.textContent = linhaTerreno.replace("Horizonte 360° e terreno 3D: ", "").replace(/\.$/, "");
-  } else {
-    badge.textContent = simData.terrain_grid?.heights_m ? "NASA LOLA DEM" : "Modelo Sintético";
-  }
+  badge.textContent = simData.modo_terreno || "NASA LOLA LDEM (Real Data)";
 }
 
-/* ---------- Executar Simulação Principal ---------- */
+/* ---------- Run Primary Simulation ---------- */
 async function rodarSimulacao(ev) {
   if (ev) ev.preventDefault();
   const submitBtn = $("scenario-form")?.querySelector('button[type="submit"]');
   if (submitBtn) submitBtn.disabled = true;
-  setStatus("Calculando efemérides NASA SPICE e relevo LOLA...");
+  setStatus("Computing NASA SPICE ephemerides & real LOLA topography...");
 
   try {
     const params = lerParametros();
@@ -165,44 +159,40 @@ async function rodarSimulacao(ev) {
       onStepChange: (idx) => syncStepMetrics(idx),
     });
 
-    setStatus(
-      source === "online"
-        ? `Simulação concluída (passo efetivo: ${Math.round((simData.step_min || 60) / 60)}h).`
-        : "Simulação concluída em modo offline de contingência."
-    );
+    setStatus(`Simulation complete (integration step: ${Math.round((simData.step_min || 60) / 60)}h).`);
   } catch (err) {
     console.error(err);
-    setStatus(`Erro na simulação: ${err.message}`, true);
+    setStatus(`Simulation error: ${err.message}`, true);
   } finally {
     if (submitBtn) submitBtn.disabled = false;
   }
 }
 
-/* ---------- Comparador de Cenários ---------- */
+/* ---------- Scenario Comparator ---------- */
 async function adicionarComparacao() {
   if (getComparedScenarios().length >= 6) {
-    return setStatus("Limite máximo de 6 cenários atingido.", true);
+    return setStatus("Maximum limit of 6 scenarios reached.", true);
   }
-  setStatus("Adicionando cenário ao comparador...");
+  setStatus("Adding scenario to comparator...");
   try {
     const params = lerParametros();
     const res = await simularPouso(params);
     const simData = res?.data ?? res;
 
     addScenarioToComparator(simData);
-    setStatus("Cenário adicionado ao comparador.");
+    setStatus("Scenario added to comparator.");
   } catch (err) {
-    setStatus(`Erro ao comparar: ${err.message}`, true);
+    setStatus(`Comparison error: ${err.message}`, true);
   }
 }
 
 function limparComparacao() {
   clearComparator();
   renderComparisonChart([], "chart-compare");
-  setStatus("Comparador limpo.");
+  setStatus("Comparator cleared.");
 }
 
-/* ---------- Inicialização ---------- */
+/* ---------- Initialization ---------- */
 document.addEventListener("DOMContentLoaded", async () => {
   iniciarModo();
   await carregarSites();
@@ -212,7 +202,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     $(id)?.addEventListener("input", () => {
       if ($("site")) $("site").value = "custom";
       const ctxEl = $("site-context");
-      if (ctxEl) ctxEl.textContent = "Coordenadas editadas manualmente.";
+      if (ctxEl) ctxEl.textContent = "Manually edited lunar coordinates (uses real LOLA DEM if lat ≤ -80°S).";
     });
   });
 

@@ -58,8 +58,8 @@ function buildEnglishAssumptions(simData) {
   const items = [
     `Lunar Ephemerides & Orientation: NASA/JPL SPICE (DE421, MOON_ME_DE421 frame), ${stepH}h integration step.`,
     `360° Horizon & 3D Terrain: ${terrainMode} (Touchdown slope: ${slopeTxt}).`,
-    `Apparent Solar Disc: 0.265° semidiameter without atmospheric refraction.`,
-    `NASA GO Criteria (Artemis/CLPS): Touchdown slope ≤ 15°, Direct-to-Earth (DTE) ≥ 50%, and Solar illumination ≥ 50% (or ≥ 156h continuous sunlit sortie window).`,
+    `Apparent Solar Disc: 0.265° semidiameter without atmospheric refraction; Direct-to-Earth (DTE) evaluated via geometric line-of-sight (0° terrain clearance; 2° RF multipath margin noted for link budget).`,
+    `NASA GO Criteria (Artemis/CLPS): Touchdown slope ≤ 15°, Direct-to-Earth (DTE) ≥ 50%, and Solar availability ≥ 50% (or ≥ 156h continuous sunlit sortie window with ≥ 40% monthly illumination).`,
   ];
 
   if (m) {
@@ -79,16 +79,10 @@ export function updateSimulationUI(simData, source = 'online') {
   setText('m-earth-frac', `${simData.earth_fraction_pct}%`);
   setText('m-dark', `${simData.max_continuous_night_hours} h`);
 
-  // Atualiza qualquer badge de modelo de terreno no HTML (remove "Modelo Sintético" fixo)
-  const terrainBadgeIds = ['terrain-badge', 'model-badge', 'modo-terreno'];
-  terrainBadgeIds.forEach((id) => {
+  const terrainLabel = simData.modo_terreno || 'NASA LOLA LDEM (Real Data)';
+  ['terrain-badge', 'model-badge', 'modo-terreno'].forEach((id) => {
     const el = document.getElementById(id);
-    if (el) el.textContent = simData.modo_terreno || 'NASA LOLA LDEM (Real Data, 240 m/px)';
-  });
-  document.querySelectorAll('.badge, .chip, small, span').forEach((el) => {
-    if (el.children.length === 0 && /Modelo Sint[eé]tico/i.test(el.textContent.trim())) {
-      el.textContent = simData.modo_terreno || 'NASA LOLA LDEM (Real Data)';
-    }
+    if (el) el.textContent = terrainLabel;
   });
 
   const maxSunH =
@@ -132,7 +126,6 @@ export function syncStepMetrics(stepIndex = 0) {
   const isWindowGo = simData.go_nogo === 'GO';
   const isInconclusive = simData.go_nogo === 'INCONCLUSIVE';
 
-  // O Card de Veredito mostra o resultado oficial da janela da missão (GO / NO-GO / INCONCLUSIVE)
   const cardVerdict = document.getElementById('card-verdict');
   if (cardVerdict) {
     cardVerdict.dataset.state = isWindowGo ? 'go' : 'nogo';

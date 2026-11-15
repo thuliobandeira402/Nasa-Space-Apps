@@ -1,6 +1,6 @@
 /**
  * Interactive 3D Component (React 18 + HTM + Three.js)
- * 100% Real Data: High-Density NASA LRO/LOLA DEM (128x128, 36 km span) & JPL DE421 Ephemerides
+ * 100% Real Data: NASA LRO/LOLA DEM (128x128, 36 km span) & JPL DE421 Ephemerides
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -13,7 +13,7 @@ import { getLolaPolarMapUrl } from './api.js';
 const html = htm.bind(React.createElement);
 let reactRoot = null;
 
-// Cache de texturas procedurais de alta definição para não recalcular entre trocas de aba
+// Cache de texturas globais reutilizáveis entre abas
 const TEXTURE_CACHE = {
   earthMap: null,
   earthRough: null,
@@ -22,6 +22,29 @@ const TEXTURE_CACHE = {
   moonBump: null,
   sunMap: null,
 };
+
+function disposeSceneResources(scene) {
+  const cachedTextures = new Set(Object.values(TEXTURE_CACHE).filter(Boolean));
+  const texKeys = ['map', 'bumpMap', 'roughnessMap', 'normalMap', 'emissiveMap', 'alphaMap'];
+
+  scene.traverse((obj) => {
+    if (obj.geometry) {
+      obj.geometry.dispose();
+    }
+    if (obj.material) {
+      const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+      for (const mat of materials) {
+        for (const key of texKeys) {
+          const tex = mat[key];
+          if (tex && !cachedTextures.has(tex)) {
+            tex.dispose();
+          }
+        }
+        mat.dispose();
+      }
+    }
+  });
+}
 
 function azElToVector3(azDeg, elDeg, radius) {
   const az = THREE.MathUtils.degToRad(azDeg || 0);
@@ -82,20 +105,6 @@ function getHorizonMaskAtAzimuth(horizonProfile = [], azDeg = 0) {
   return e0 * (1 - frac) + e1 * frac;
 }
 
-function translatePhaseName(rawName) {
-  if (!rawName) return 'JPL DE421 Ephemerides · LRO/LOLA';
-  return rawName
-    .replace('Lua Nova', 'New Moon')
-    .replace('Lua Crescente', 'Waxing Crescent')
-    .replace('Quarto Crescente', 'First Quarter')
-    .replace('Gibosa Crescente', 'Waxing Gibbous')
-    .replace('Lua Cheia', 'Full Moon')
-    .replace('Gibosa Minguante', 'Waning Gibbous')
-    .replace('Quarto Minguante', 'Last Quarter')
-    .replace('Lua Minguante', 'Waning Crescent')
-    .replace('iluminada', 'illuminated');
-}
-
 function createGlowTexture(rgbaCenter = 'rgba(255, 252, 235, 1)', rgbaMid = 'rgba(255, 200, 90, 0.75)') {
   const canvas = document.createElement('canvas');
   canvas.width = 128;
@@ -110,10 +119,6 @@ function createGlowTexture(rgbaCenter = 'rgba(255, 252, 235, 1)', rgbaMid = 'rgb
   ctx.fillRect(0, 0, 128, 128);
   return new THREE.CanvasTexture(canvas);
 }
-
-// ============================================================================
-// GERADORES PROCEDURAIS DE PLANETAS E ASTROS (TERRA, LUA, SOL E ESPAÇONAVE)
-// ============================================================================
 
 function fbmNoise(x, y, z) {
   return (
@@ -170,7 +175,6 @@ function getEarthTextures() {
       const n = fbmNoise(nx * 1.5 + 0.4, ny * 1.5 - 0.2, nz * 1.5 + 0.7);
       const idx = (py * w + px) * 4;
 
-      // Calotas polares
       const iceThreshold = 1.18 - 0.12 * n;
       if (absLat > iceThreshold) {
         imgMap.data[idx] = 240;
@@ -180,7 +184,6 @@ function getEarthTextures() {
         imgRough.data[idx] = imgRough.data[idx + 1] = imgRough.data[idx + 2] = 210;
         imgRough.data[idx + 3] = 255;
       } else if (n > 0.06) {
-        // Continentes (florestas tropicais/temperadas, savanas e cadeias montanhosas)
         const elev = Math.min(1, (n - 0.06) / 0.65);
         const aridity = Math.max(0, 1 - Math.abs(absLat - 0.42) * 3.2);
         const r = Math.round(34 + elev * 95 + aridity * 65);
@@ -190,22 +193,18 @@ function getEarthTextures() {
         imgMap.data[idx + 1] = Math.min(255, g);
         imgMap.data[idx + 2] = Math.min(255, b);
         imgMap.data[idx + 3] = 255;
-        // Continentes foscos (alta rugosidade = 230)
         imgRough.data[idx] = imgRough.data[idx + 1] = imgRough.data[idx + 2] = 230;
         imgRough.data[idx + 3] = 255;
       } else {
-        // Oceanos (águas rasas costeiras turquesa -> oceano profundo azul-marinho)
         const depth = Math.min(1, Math.max(0, (0.06 - n) / 0.65));
         imgMap.data[idx] = Math.round(12 + (1 - depth) * 28);
         imgMap.data[idx + 1] = Math.round(52 + (1 - depth) * 68);
         imgMap.data[idx + 2] = Math.round(138 + (1 - depth) * 72);
         imgMap.data[idx + 3] = 255;
-        // Oceanos com reflexo especular solar (baixa rugosidade = 55)
         imgRough.data[idx] = imgRough.data[idx + 1] = imgRough.data[idx + 2] = 55;
         imgRough.data[idx + 3] = 255;
       }
 
-      // Camada de nuvens atmosféricas
       const cNoise = fbmNoise(nx * 2.8 - 1.1, ny * 3.4 + 0.5, nz * 2.8 + 1.9);
       const cloudAlpha = Math.max(0, Math.min(255, Math.round((cNoise - 0.08) * 380)));
       imgClouds.data[idx] = 255;
@@ -249,7 +248,6 @@ function getMoonTextures() {
   const ctxBump = canvasBump.getContext('2d');
   const imgBump = ctxBump.createImageData(w, h);
 
-  // Crateras determinísticas para relevo 3D
   const craters = [];
   for (let i = 0; i < 140; i++) {
     const clat = ((i * 53) % 160 - 80) * (Math.PI / 180);
@@ -273,7 +271,6 @@ function getMoonTextures() {
       const ny = sinLat;
       const nz = cosLat * Math.sin(lon);
 
-      // Maria basálticos escuros vs. Highlands claras
       const mariaNoise = fbmNoise(nx * 1.4, ny * 1.4, nz * 1.4);
       const detailNoise = fbmNoise(nx * 6.5, ny * 6.5, nz * 6.5);
 
@@ -352,7 +349,6 @@ function getSunPhotosphereTexture() {
   return TEXTURE_CACHE.sunMap;
 }
 
-// Constrói o Globo Terrestre 3D detalhado (Continentes + Oceanos Especulares + Nuvens + Atmosfera Fresnel)
 function buildDetailedEarthGroup(radius = 1.1, labelText = '🌍 EARTH', labelOffsetY = 1.55) {
   const group = new THREE.Group();
   const { map, roughnessMap, cloudsMap } = getEarthTextures();
@@ -368,11 +364,9 @@ function buildDetailedEarthGroup(radius = 1.1, labelText = '🌍 EARTH', labelOf
       emissiveIntensity: 0.28,
     })
   );
-  // Inclinação axial terrestre real (23.44°)
   earthSphere.rotation.z = THREE.MathUtils.degToRad(23.44);
   group.add(earthSphere);
 
-  // Esfera de nuvens dinâmicas
   const cloudsMesh = new THREE.Mesh(
     new THREE.SphereGeometry(radius * 1.018, 40, 40),
     new THREE.MeshStandardMaterial({
@@ -385,7 +379,6 @@ function buildDetailedEarthGroup(radius = 1.1, labelText = '🌍 EARTH', labelOf
   );
   group.add(cloudsMesh);
 
-  // Halo atmosférico azul celeste
   const atmoGlow = new THREE.Sprite(
     new THREE.SpriteMaterial({
       map: createGlowTexture('rgba(96, 165, 250, 0.75)', 'rgba(37, 99, 235, 0.32)'),
@@ -406,7 +399,6 @@ function buildDetailedEarthGroup(radius = 1.1, labelText = '🌍 EARTH', labelOf
   return { group, earthSphere, cloudsMesh };
 }
 
-// Constrói o Sol com Fotosfera de Plasma + Dupla Coroa Solar
 function buildDetailedSunGroup(radius = 0.95, haloScale = 8.0, labelOffsetY = 1.9) {
   const sunGroup = new THREE.Group();
   const sunTex = getSunPhotosphereTexture();
@@ -445,15 +437,12 @@ function buildDetailedSunGroup(radius = 0.95, haloScale = 8.0, labelOffsetY = 1.
   return { sunGroup, sunSphere };
 }
 
-// Constrói Espaçonave Orbital TLI Detalhada (Orion / CLPS Transfer Stage com Painéis Solares e Pluma de Motor)
 function buildSpacecraftMesh() {
   const root = new THREE.Group();
-  // Geometria interna alinhada para que +Z (direção do lookAt) seja o nariz da espaçonave
   const model = new THREE.Group();
   model.rotation.x = Math.PI / 2;
   root.add(model);
 
-  // Cápsula / Coifa frontal cônica
   const nose = new THREE.Mesh(
     new THREE.ConeGeometry(0.11, 0.22, 16),
     new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.3, metalness: 0.35 })
@@ -461,7 +450,6 @@ function buildSpacecraftMesh() {
   nose.position.y = 0.22;
   model.add(nose);
 
-  // Módulo de serviço cilíndrico revestido em Kapton/Alumínio
   const bus = new THREE.Mesh(
     new THREE.CylinderGeometry(0.11, 0.12, 0.26, 16),
     new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.35, metalness: 0.6 })
@@ -469,7 +457,6 @@ function buildSpacecraftMesh() {
   bus.position.y = -0.02;
   model.add(bus);
 
-  // Campânula do motor de injeção translunar (TLI Engine Nozzle)
   const nozzle = new THREE.Mesh(
     new THREE.CylinderGeometry(0.04, 0.08, 0.12, 14),
     new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.4, metalness: 0.8 })
@@ -477,7 +464,6 @@ function buildSpacecraftMesh() {
   nozzle.position.y = -0.2;
   model.add(nozzle);
 
-  // Pluma de plasma do motor (brilha intensamente no início TLI e na captura LOI)
   const plumeGlow = new THREE.Sprite(
     new THREE.SpriteMaterial({
       map: createGlowTexture('rgba(125, 211, 252, 1)', 'rgba(56, 189, 248, 0.6)'),
@@ -490,7 +476,6 @@ function buildSpacecraftMesh() {
   plumeGlow.position.y = -0.32;
   model.add(plumeGlow);
 
-  // 4 Painéis Solares em Cruz (estilo Orion ESM)
   const panelMat = new THREE.MeshStandardMaterial({
     color: 0x1d4ed8,
     emissive: 0x1e40af,
@@ -514,9 +499,6 @@ function buildSpacecraftMesh() {
   return { root, plumeGlow };
 }
 
-/**
- * Cria rótulo 3D compacto, nítido e proporcional (screenHeight = 0.036 por padrão)
- */
 function createLabelSprite(text, colorHex = '#ffffff', bgRgba = 'rgba(6, 10, 24, 0.9)', screenHeight = 0.036) {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
@@ -584,7 +566,7 @@ function createStarfield(count = 3200, minRadius = 120, maxRadius = 240) {
   return new THREE.Points(geo, mat);
 }
 
-function buildHorizonRidgeMesh(horizonProfile = [], radius = 24, baseY = -1.5) {
+function buildHorizonRidgeMesh(horizonProfile = [], radius = 24, baseY = -2.5) {
   const group = new THREE.Group();
   if (!Array.isArray(horizonProfile) || horizonProfile.length < 3) {
     return { group, wallMesh: null };
@@ -796,22 +778,31 @@ function buildCommBlockIndicator(sphereRadius = 0.18, glowScale = 1.6, badgeOffs
   );
   hitGlow.scale.set(glowScale, glowScale, 1);
 
-  const blockBadge = createLabelSprite(
-    '⛰️ Terrain blocking communication',
+  const terrainBlockBadge = createLabelSprite(
+    '⛰️ Terrain blocking DTE',
     '#ff5c7a',
     'rgba(28, 8, 18, 0.92)',
     0.034
   );
-  blockBadge.position.set(0, badgeOffsetY, 0);
+  terrainBlockBadge.position.set(0, badgeOffsetY, 0);
 
-  commBlockGroup.add(hitSphere, hitGlow, blockBadge);
-  return commBlockGroup;
+  const horizonBlockBadge = createLabelSprite(
+    '🌐 Earth below lunar horizon',
+    '#fbbf24',
+    'rgba(15, 23, 42, 0.92)',
+    0.034
+  );
+  horizonBlockBadge.position.set(0, badgeOffsetY, 0);
+  horizonBlockBadge.visible = false;
+
+  commBlockGroup.add(hitSphere, hitGlow, terrainBlockBadge, horizonBlockBadge);
+  return { commBlockGroup, terrainBlockBadge, horizonBlockBadge };
 }
 
 function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
   const [viewMode, setViewMode] = useState('superficie'); // 'viagem' | 'globo' | 'superficie'
   const [colorMode, setColorMode] = useState('natural');  // 'natural' | 'elevation' | 'slope'
-  const [vertExag, setVertExag] = useState(1.5);          // Exagero vertical (1.0x a 4.0x)
+  const [vertExag, setVertExag] = useState(1.5);          // Local terrain vertical exaggeration (1.0x - 4.0x)
   const [stepIdx, setStepIdx] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
 
@@ -839,6 +830,8 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
     commLineMat: null,
     commLine: null,
     commBlockGroup: null,
+    terrainBlockBadge: null,
+    horizonBlockBadge: null,
     globePin: null,
     globePinPos: new THREE.Vector3(0, -2.24, 0),
     landerBody: null,
@@ -860,6 +853,7 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
     targetHemiIntensity: 0.22,
     targetLanderLightIntensity: 0.3,
     earthVisibleNow: true,
+    earthElevNow: 0,
     compassRadius: 24,
   });
 
@@ -891,7 +885,7 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
     return () => clearInterval(timer);
   }, [isPlaying, timeline.length, onStepChange]);
 
-  // Atualiza cores do terreno e escala vertical instantaneamente sem recriar a câmera!
+  // Atualiza cores e exagero vertical APENAS da malha local do solo (sem distorcer Sol/Terra)
   useEffect(() => {
     const refs = sceneObjectsRef.current;
     const grid = simData?.terrain_grid;
@@ -937,9 +931,10 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       }
     }
 
+    // Mantém o anel de horizonte na escala angular verdadeira (1.0x)
     if (refs.horizonBeltGroup) {
       refs.horizonBeltGroup.position.y = centerZ + 0.72;
-      refs.horizonBeltGroup.scale.set(1, vertExag, 1);
+      refs.horizonBeltGroup.scale.set(1, 1, 1);
     }
 
     const newColors = computeTerrainVertexColors(grid, pos.count, colorMode);
@@ -994,6 +989,12 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
     sunLight.shadow.bias = -0.0004;
     scene.add(sunLight);
 
+    const initFrame = timeline[stepIdx] || activeFrame;
+    const initSunEl = Number(initFrame.sun_elevation_deg || 0);
+    const initSunAz = Number(initFrame.sun_azimuth_deg || 0);
+    const initEarthEl = Number(initFrame.earth_elevation_deg || 0);
+    const initEarthAz = Number(initFrame.earth_azimuth_deg || 0);
+
     const refs = {
       viewMode,
       globeMesh: null,
@@ -1016,6 +1017,8 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       commLineMat: null,
       commLine: null,
       commBlockGroup: null,
+      terrainBlockBadge: null,
+      horizonBlockBadge: null,
       globePin: null,
       globePinPos: new THREE.Vector3(0, -2.24, 0),
       landerBody: null,
@@ -1037,17 +1040,11 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       targetHemiIntensity: 0.16,
       targetLanderLightIntensity: 0.3,
       earthVisibleNow: true,
+      earthElevNow: initEarthEl,
       compassRadius: 24,
     };
 
-    const initFrame = timeline[stepIdx] || activeFrame;
-    const initSunEl = Number(initFrame.sun_elevation_deg || 0);
-    const initSunAz = Number(initFrame.sun_azimuth_deg || 0);
-    const initEarthEl = Number(initFrame.earth_elevation_deg || 0);
-    const initEarthAz = Number(initFrame.earth_azimuth_deg || 0);
-
     if (viewMode === 'viagem') {
-      // MODO 1: TRANSFERÊNCIA TRANSLUNAR (TLI) COM PLANETAS DETALHADOS, ANÉIS LEO/LLO E ESPAÇONAVE 3D
       camera.position.set(-0.2, 6.2, 10.6);
       controls.target.set(-0.2, 0.1, 0.8);
 
@@ -1056,14 +1053,12 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       const earthCenter = new THREE.Vector3(ePos.x, ePos.y, ePos.z);
       const moonCenter = new THREE.Vector3(mPos.x, mPos.y, mPos.z);
 
-      // Terra 3D com Continentes, Oceanos Especulares e Camada de Nuvens
       const detailedEarth = buildDetailedEarthGroup(1.12, '🌍 EARTH', 1.65);
       detailedEarth.group.position.copy(earthCenter);
       scene.add(detailedEarth.group);
       refs.earthCloudsMesh = detailedEarth.cloudsMesh;
       refs.earthSpinSphere = detailedEarth.earthSphere;
 
-      // Anel de Órbita de Estacionamento Terrestre (LEO Parking Orbit)
       const leoRing = new THREE.Mesh(
         new THREE.RingGeometry(1.36, 1.4, 64),
         new THREE.MeshBasicMaterial({ color: 0x38bdf8, side: THREE.DoubleSide, transparent: true, opacity: 0.55 })
@@ -1072,7 +1067,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       leoRing.position.copy(earthCenter);
       scene.add(leoRing);
 
-      // Lua 3D com Textura de Maria/Crateras + Bump Map
       const moonTextures = getMoonTextures();
       const moonGroup = new THREE.Group();
       moonGroup.position.copy(moonCenter);
@@ -1091,17 +1085,14 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       moonGroup.add(moon, moonLabel);
       scene.add(moonGroup);
 
-      // Anel de Captura Polar Lunar (LLO Polar Capture Orbit -> South Pole)
       const lloRing = new THREE.Mesh(
         new THREE.RingGeometry(0.68, 0.71, 64),
         new THREE.MeshBasicMaterial({ color: 0x3ddc97, side: THREE.DoubleSide, transparent: true, opacity: 0.65 })
       );
-      // Órbita polar (90° de inclinação passando sobre o Polo Sul lunar)
       lloRing.rotation.y = Math.PI / 4;
       lloRing.position.copy(moonCenter);
       scene.add(lloRing);
 
-      // Pino luminoso no Polo Sul da Lua indicando o alvo final de pouso
       const southPoleTarget = new THREE.Mesh(
         new THREE.SphereGeometry(0.055, 12, 12),
         new THREE.MeshBasicMaterial({ color: 0x3ddc97 })
@@ -1109,7 +1100,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       southPoleTarget.position.set(moonCenter.x, moonCenter.y - 0.49, moonCenter.z);
       scene.add(southPoleTarget);
 
-      // Curva de Transferência TLI + Marcos de Queima (TLI Burn & LOI Capture)
       const pts = (viagemData?.tli_trajectory || []).map((p) => new THREE.Vector3(p.x, p.y, p.z));
       refs.tliPoints = pts;
       if (pts.length > 1) {
@@ -1119,7 +1109,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
         );
         scene.add(tliLine);
 
-        // Marcador TLI Burn (Injeção Translunar na saída da Terra)
         const tliBurnMarker = new THREE.Group();
         tliBurnMarker.position.copy(pts[1] || pts[0]);
         const burnDot = new THREE.Mesh(
@@ -1131,7 +1120,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
         tliBurnMarker.add(burnDot, burnLabel);
         scene.add(tliBurnMarker);
 
-        // Marcador LOI Capture (Inserção em Órbita Lunar na chegada à Lua)
         const loiMarker = new THREE.Group();
         loiMarker.position.copy(pts[pts.length - 1]);
         const loiDot = new THREE.Mesh(
@@ -1143,20 +1131,15 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
         loiMarker.add(loiDot, loiLabel);
         scene.add(loiMarker);
 
-        // Pulsos luminosos percorrendo a trajetória TLI para indicar sentido do fluxo orbital
         const tliPulses = [];
         const pGeo = new THREE.SphereGeometry(0.045, 10, 10);
         for (let i = 0; i < 10; i++) {
-          const pMesh = new THREE.Mesh(
-            pGeo,
-            new THREE.MeshBasicMaterial({ color: 0x7dd3fc })
-          );
+          const pMesh = new THREE.Mesh(pGeo, new THREE.MeshBasicMaterial({ color: 0x7dd3fc }));
           scene.add(pMesh);
           tliPulses.push(pMesh);
         }
         refs.tliPulses = tliPulses;
 
-        // Espaçonave 3D orientada ao longo do vetor velocidade tangente da trajetória
         const scObj = buildSpacecraftMesh();
         scObj.root.position.copy(pts[0]);
         if (pts[1]) scObj.root.lookAt(pts[1]);
@@ -1165,7 +1148,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
         refs.probePlume = scObj.plumeGlow;
       }
     } else if (viewMode === 'globo') {
-      // MODO 2: GLOBO LUNAR 3D COM RELEVO GLOBAL + CALOTA POLAR LOLA REAL + TERRA/SOL DETALHADOS
       camera.position.set(0, -4.6, 5.8);
       controls.target.set(0, -0.5, 0);
 
@@ -1298,13 +1280,15 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       refs.commLineMat = commLineMat;
       refs.commLine = commLine;
 
-      const commBlockGroup = buildCommBlockIndicator(0.095, 0.9, 0.45);
-      scene.add(commBlockGroup);
-      refs.commBlockGroup = commBlockGroup;
+      const blockObj = buildCommBlockIndicator(0.095, 0.9, 0.45);
+      scene.add(blockObj.commBlockGroup);
+      refs.commBlockGroup = blockObj.commBlockGroup;
+      refs.terrainBlockBadge = blockObj.terrainBlockBadge;
+      refs.horizonBlockBadge = blockObj.horizonBlockBadge;
     } else {
-      // MODO 3: RELEVO REAL LOLA + CORDILHEIRA 360° + SOL E TERRA DETALHADOS NO CÉU
+      // MODO 3: SUPERFÍCIE LOCAL (100% DADOS REAIS LOLA QUANDO DISPONÍVEL; PLANO DE REFERÊNCIA FORA DE -80°S)
       const grid = simData?.terrain_grid;
-      const gridSize = grid?.size || 128;
+      const gridSize = grid?.size || 32;
       const segments = gridSize - 1;
       const terrainSpan = 36;
       const terrainGeo = new THREE.PlaneGeometry(terrainSpan, terrainSpan, segments, segments);
@@ -1348,10 +1332,12 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
 
       const c = Math.floor(gridSize / 2);
       const getZ = (r, col) => pos.getZ(Math.min(gridSize - 1, Math.max(0, r)) * gridSize + Math.min(gridSize - 1, Math.max(0, col)));
-      const centerZ = 0.25 * (getZ(c - 1, c - 1) + getZ(c - 1, c) + getZ(c, c - 1) + getZ(c, c));
+      const centerZ = grid
+        ? 0.25 * (getZ(c - 1, c - 1) + getZ(c - 1, c) + getZ(c, c - 1) + getZ(c, c))
+        : 0;
       const stepWorld = terrainSpan / Math.max(1, gridSize - 1);
-      const dzdx = (getZ(c, c + 1) - getZ(c, c - 1)) / (2 * stepWorld);
-      const dzdy = (getZ(c - 1, c) - getZ(c + 1, c)) / (2 * stepWorld);
+      const dzdx = grid ? (getZ(c, c + 1) - getZ(c, c - 1)) / (2 * stepWorld) : 0;
+      const dzdy = grid ? (getZ(c - 1, c) - getZ(c + 1, c)) / (2 * stepWorld) : 0;
       const normalVec = new THREE.Vector3(-dzdx, 1, dzdy).normalize();
 
       camera.position.set(-4.5, centerZ + 4.8, 12.5);
@@ -1369,9 +1355,10 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       refs.landerPadRing = landerObj.padRing;
       refs.landerTopPos = new THREE.Vector3(0, centerZ + 0.72, 0);
 
+      // Cordilheira 360° em escala angular verdadeira (1.0x)
       const horizonObj = buildHorizonRidgeMesh(simData?.horizon_profile || [], 24, -2.5);
       horizonObj.group.position.y = centerZ + 0.72;
-      horizonObj.group.scale.set(1, vertExag, 1);
+      horizonObj.group.scale.set(1, 1, 1);
       scene.add(horizonObj.group);
       refs.horizonBeltGroup = horizonObj.group;
       refs.horizonWallMesh = horizonObj.wallMesh;
@@ -1381,8 +1368,9 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       scene.add(landerLight);
       refs.landerLight = landerLight;
 
-      const sunInitVisual = refs.landerTopPos.clone().add(azElToVector3(initSunAz, initSunEl * vertExag, 34));
-      const earthInitVisual = refs.landerTopPos.clone().add(azElToVector3(initEarthAz, initEarthEl * vertExag, 30));
+      // Posições astronômicas verdadeiras (SEM multiplicar por vertExag)
+      const sunInitVisual = refs.landerTopPos.clone().add(azElToVector3(initSunAz, initSunEl, 34));
+      const earthInitVisual = refs.landerTopPos.clone().add(azElToVector3(initEarthAz, initEarthEl, 30));
       refs.sunVisualTargetPos.copy(sunInitVisual);
       refs.earthTargetPos.copy(earthInitVisual);
       refs.earthCurrentPos.copy(earthInitVisual);
@@ -1430,9 +1418,11 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       refs.commLineMat = commLineMat;
       refs.commLine = commLine;
 
-      const commBlockGroup = buildCommBlockIndicator(0.2, 1.8, 0.95);
-      scene.add(commBlockGroup);
-      refs.commBlockGroup = commBlockGroup;
+      const blockObj = buildCommBlockIndicator(0.2, 1.8, 0.95);
+      scene.add(blockObj.commBlockGroup);
+      refs.commBlockGroup = blockObj.commBlockGroup;
+      refs.terrainBlockBadge = blockObj.terrainBlockBadge;
+      refs.horizonBlockBadge = blockObj.horizonBlockBadge;
     }
 
     sceneObjectsRef.current = refs;
@@ -1444,7 +1434,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       const elapsed = clock.getElapsedTime();
       const r = sceneObjectsRef.current;
 
-      // Rotação suave das nuvens e da Terra
       if (r.earthCloudsMesh) {
         r.earthCloudsMesh.rotation.y = elapsed * 0.08;
       }
@@ -1452,7 +1441,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
         r.earthSpinSphere.rotation.y = elapsed * 0.04;
       }
 
-      // Anima os pulsos ao longo da curva TLI no Modo 1
       if (r.viewMode === 'viagem' && r.tliPulses.length > 0 && r.tliPoints.length > 1) {
         const maxPts = r.tliPoints.length - 1;
         for (let i = 0; i < r.tliPulses.length; i++) {
@@ -1491,28 +1479,27 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
         const originPt = r.viewMode === 'globo' ? r.globePinPos : r.landerTopPos;
 
         if (!r.earthVisibleNow) {
-          if (r.viewMode === 'superficie' && r.terrainMesh) {
-            r.terrainMesh.updateMatrixWorld();
-            if (r.horizonWallMesh) r.horizonWallMesh.updateMatrixWorld();
-
+          if (r.viewMode === 'superficie') {
             const vecToEarth = r.earthCurrentPos.clone().sub(originPt);
             const distToEarth = vecToEarth.length();
             const dirToEarth = vecToEarth.clone().normalize();
 
-            const raycaster = raycasterRef.current;
-            raycaster.set(originPt, dirToEarth);
-
-            const obstacles = [r.terrainMesh];
-            if (r.horizonWallMesh) obstacles.push(r.horizonWallMesh);
-
-            const hits = raycaster.intersectObjects(obstacles, false);
-            const validHit = hits.find((h) => h.distance > 0.45 && h.distance < distToEarth - 0.5);
-
-            if (validHit) {
-              r.commBeamEndPos.copy(validHit.point);
+            if (r.earthElevNow > 0 && r.horizonWallMesh) {
+              // Terra acima de 0°, mas bloqueada por montanha LOLA no horizonte
+              r.horizonWallMesh.updateMatrixWorld();
+              const raycaster = raycasterRef.current;
+              raycaster.set(originPt, dirToEarth);
+              const hits = raycaster.intersectObject(r.horizonWallMesh, false);
+              const validHit = hits.find((h) => h.distance > 0.45 && h.distance < distToEarth - 0.5);
+              if (validHit) {
+                r.commBeamEndPos.copy(validHit.point);
+              } else {
+                r.commBeamEndPos.copy(originPt).addScaledVector(dirToEarth, 24.0);
+              }
             } else {
-              const hitDist = Math.min(23.5, distToEarth * 0.78);
-              r.commBeamEndPos.copy(originPt).addScaledVector(dirToEarth, hitDist);
+              // Terra geometricamente abaixo do horizonte lunar (elev <= 0°)
+              const flatDir = new THREE.Vector3(dirToEarth.x, 0, dirToEarth.z).normalize();
+              r.commBeamEndPos.copy(originPt).addScaledVector(flatDir, 24.0);
             }
           } else if (r.viewMode === 'globo') {
             const dirToEarth = r.earthCurrentPos.clone().sub(originPt).normalize();
@@ -1532,6 +1519,8 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
           if (r.commBlockGroup) {
             r.commBlockGroup.position.copy(r.commBeamEndPos);
             r.commBlockGroup.visible = true;
+            if (r.terrainBlockBadge) r.terrainBlockBadge.visible = r.earthElevNow > 0;
+            if (r.horizonBlockBadge) r.horizonBlockBadge.visible = r.earthElevNow <= 0;
           }
         } else {
           r.commBeamEndPos.copy(r.earthCurrentPos);
@@ -1576,11 +1565,13 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       cancelAnimationFrame(animId);
       window.removeEventListener('resize', onResize);
       controls.dispose();
+      disposeSceneResources(scene);
       renderer.dispose();
+      container.innerHTML = '';
     };
   }, [viewMode, simData, viagemData]);
 
-  // Atualiza os alvos físicos a cada passo do slider
+  // Atualiza os alvos físicos a cada passo do slider (ângulos astronômicos verdadeiros)
   useEffect(() => {
     const refs = sceneObjectsRef.current;
     if (!refs.sunLight) return;
@@ -1596,7 +1587,9 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
     const earthVisible = activeFrame.earth_visible !== undefined
       ? Boolean(activeFrame.earth_visible)
       : earthElev > earthMaskElev;
+
     refs.earthVisibleNow = earthVisible;
+    refs.earthElevNow = earthElev;
 
     if (viewMode === 'viagem') {
       const spaceSunPos = azElToVector3(sunAz, Math.max(12, sunElev), 38);
@@ -1624,7 +1617,7 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       refs.earthTargetPos.copy(earthGlobePos);
 
       if (refs.commLineMat) {
-        const beamColor = earthVisible ? 0x3ddc97 : 0xff5c7a;
+        const beamColor = earthVisible ? 0x3ddc97 : earthElev > 0 ? 0xff5c7a : 0xfbbf24;
         refs.commLineMat.color.setHex(beamColor);
         refs.commLineMat.opacity = earthVisible ? 0.75 : 0.8;
         refs.commPulses.forEach((p) => p.material.color.setHex(beamColor));
@@ -1640,7 +1633,7 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       }
     } else {
       const discFrac = solarDiscIlluminatedFraction(sunElev, maskElev);
-      const lightEl = Math.max(2.2, sunElev * vertExag + 2.0);
+      const lightEl = Math.max(2.2, sunElev + 2.0);
       const sunLightPos = refs.landerTopPos.clone().add(azElToVector3(sunAz, lightEl, 42));
 
       refs.sunLightTargetPos.copy(sunLightPos);
@@ -1648,17 +1641,15 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       refs.targetHemiIntensity = 0.12 + 0.18 * discFrac;
       refs.targetLanderLightIntensity = 1.8 * (1 - discFrac) + 0.25;
 
-      const sunVisualPos = refs.landerTopPos.clone().add(azElToVector3(sunAz, sunElev * vertExag, 34));
+      // Elevações verdadeiras (não distorcidas pelo exagero vertical do solo)
+      const sunVisualPos = refs.landerTopPos.clone().add(azElToVector3(sunAz, sunElev, 34));
       refs.sunVisualTargetPos.copy(sunVisualPos);
 
-      const visualEarthEl = !earthVisible
-        ? Math.min(earthElev, earthMaskElev - 0.6) * vertExag
-        : earthElev * vertExag;
-      const earthPos = refs.landerTopPos.clone().add(azElToVector3(earthAz, visualEarthEl, 30));
+      const earthPos = refs.landerTopPos.clone().add(azElToVector3(earthAz, earthElev, 30));
       refs.earthTargetPos.copy(earthPos);
 
       if (refs.commLineMat) {
-        const beamColor = earthVisible ? 0x3ddc97 : 0xff5c7a;
+        const beamColor = earthVisible ? 0x3ddc97 : earthElev > 0 ? 0xff5c7a : 0xfbbf24;
         refs.commLineMat.color.setHex(beamColor);
         refs.commLineMat.opacity = earthVisible ? 0.85 : 0.75;
         refs.commPulses.forEach((p) => p.material.color.setHex(beamColor));
@@ -1672,7 +1663,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       }
     }
 
-    // Posiciona e orienta a espaçonave 3D tangente à curva de transferência TLI
     if (refs.probeMesh && refs.tliPoints.length > 1) {
       const maxT = Math.max(1, timeline.length - 1);
       const progress = stepIdx / maxT;
@@ -1683,7 +1673,6 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
 
       refs.probeMesh.position.lerpVectors(refs.tliPoints[i0], refs.tliPoints[i1], frac);
 
-      // Orienta o nariz da espaçonave na direção do vetor velocidade (tangente)
       const lookIdx = Math.min(refs.tliPoints.length - 1, i0 + 1);
       const prevIdx = Math.max(0, lookIdx - 1);
       const tangent = refs.tliPoints[lookIdx].clone().sub(refs.tliPoints[prevIdx]);
@@ -1691,13 +1680,12 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
         refs.probeMesh.lookAt(refs.probeMesh.position.clone().add(tangent));
       }
 
-      // Acende a pluma do motor durante o TLI Burn (início) e LOI Capture (chegada)
       if (refs.probePlume) {
         const isBurning = progress < 0.12 || progress > 0.88;
         refs.probePlume.scale.setScalar(isBurning ? 0.62 : 0.22);
       }
     }
-  }, [stepIdx, activeFrame, viewMode, timeline.length, simData, vertExag]);
+  }, [stepIdx, activeFrame, viewMode, timeline.length, simData]);
 
   function handleSliderChange(e) {
     setIsPlaying(false);
@@ -1751,11 +1739,12 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
         </div>
 
         <span className="text-xs font-mono text-slate-400">
-          ${simData?.modo_terreno || 'NASA LOLA LDEM (Real Data, 240 m/px)'} · ${translatePhaseName(fasesData?.fase_nome)}
+          ${simData?.modo_terreno || 'NASA LOLA LDEM (Real Data)'} · ${fasesData?.fase_nome || 'JPL DE421 Ephemerides'}
         </span>
       </div>
 
       ${viewMode === 'superficie' &&
+      simData?.terrain_grid &&
       html`
         <div className="flex flex-wrap items-center gap-3 text-xs text-slate-300 py-1">
           <div className="flex items-center gap-1.5">
@@ -1785,7 +1774,7 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
 
           <div className="flex items-center gap-2">
             <label htmlFor="vert-exag-slider" className="whitespace-nowrap">
-              Vertical Exaggeration <strong>${vertExag.toFixed(1)}x</strong>
+              Terrain Relief Scale <strong>${vertExag.toFixed(1)}x</strong>
             </label>
             <input
               id="vert-exag-slider"
@@ -1819,6 +1808,10 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
                   <span>TARGET</span>
                   <strong>${simData?.site_name || 'Lunar South Pole'}</strong>
                 </div>
+                <div>
+                  <span>SCALE</span>
+                  <strong>Schematic arc · True DE421 vector</strong>
+                </div>
               `
             : html`
                 <div>
@@ -1831,15 +1824,23 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
                 <div>
                   <span>EARTH</span>
                   <strong>${earthElevNow.toFixed(2)}°</strong>
-                  <em className=${earthVis ? 'ok' : 'bad'}>${earthVis ? 'ACTIVE LINK' : 'OCCULTED'}</em>
+                  <em className=${earthVis ? 'ok' : 'bad'}>
+                    ${earthVis ? 'ACTIVE LINK' : earthElevNow > 0 ? 'TERRAIN BLOCKED' : 'BELOW HORIZON'}
+                  </em>
                 </div>
-                ${simData?.terrain_grid &&
-                html`
-                  <div>
-                    <span>LOLA ELEV</span>
-                    <strong>${simData.terrain_grid.min_elevation_m}m to ${simData.terrain_grid.max_elevation_m}m</strong>
-                  </div>
-                `}
+                ${simData?.terrain_grid
+                  ? html`
+                      <div>
+                        <span>LOLA ELEV</span>
+                        <strong>${simData.terrain_grid.min_elevation_m}m to ${simData.terrain_grid.max_elevation_m}m</strong>
+                      </div>
+                    `
+                  : html`
+                      <div>
+                        <span>LOLA DEM</span>
+                        <strong>Outside -80°S coverage</strong>
+                      </div>
+                    `}
                 <div>
                   <span>SLOPE</span>
                   <strong>${slopeNow}</strong>

@@ -1,5 +1,5 @@
 /**
- * Módulo de Visualização Científica — Plotly.js
+ * Scientific Visualization Module — Plotly.js
  */
 
 const THEME = {
@@ -18,14 +18,13 @@ const THEME = {
 
 function getPlotly() {
   if (!window.Plotly) {
-    throw new Error('Plotly.js não carregado no HTML.');
+    throw new Error('Plotly.js not loaded in HTML.');
   }
   return window.Plotly;
 }
 
 /**
- * 1. Timeline Dinâmica (#chart-elevation)
- * Elevação do Sol, máscara de relevo na direção do Sol e elevação da Terra.
+ * 1. Dynamic Elevation Timeline (#chart-elevation)
  */
 export function renderElevationTimeline(simData, containerId = 'chart-elevation') {
   const Plotly = getPlotly();
@@ -76,31 +75,31 @@ export function renderElevationTimeline(simData, containerId = 'chart-elevation'
     {
       type: 'scatter',
       mode: 'lines',
-      name: '☀️ Elevação Solar (°)',
+      name: '☀️ Solar Elevation (°)',
       x: xDates,
       y: ySun,
       line: { color: THEME.sunLit, width: 2.3 },
       fill: 'tozeroy',
       fillcolor: 'rgba(251, 191, 36, 0.12)',
-      hovertemplate: '%{x}<br>Sol: <b>%{y:.2f}°</b><extra></extra>',
+      hovertemplate: '%{x}<br>Sun: <b>%{y:.2f}°</b><extra></extra>',
     },
     {
       type: 'scatter',
       mode: 'lines',
-      name: '⛰️ Relevo na dir. do Sol (°)',
+      name: '⛰️ Terrain Horizon Mask (°)',
       x: xDates,
       y: yMask,
       line: { color: THEME.horizonLine, width: 1.4, dash: 'dot' },
-      hovertemplate: '%{x}<br>Horizonte: <b>%{y:.2f}°</b><extra></extra>',
+      hovertemplate: '%{x}<br>Horizon Mask: <b>%{y:.2f}°</b><extra></extra>',
     },
     {
       type: 'scatter',
       mode: 'lines',
-      name: '🌍 Elevação da Terra (°)',
+      name: '🌍 Earth Elevation (°)',
       x: xDates,
       y: yEarth,
       line: { color: THEME.earth, width: 1.9, dash: 'dash' },
-      hovertemplate: '%{x}<br>Terra: <b>%{y:.2f}°</b><extra></extra>',
+      hovertemplate: '%{x}<br>Earth: <b>%{y:.2f}°</b><extra></extra>',
     },
   ];
 
@@ -124,12 +123,12 @@ export function renderElevationTimeline(simData, containerId = 'chart-elevation'
           { count: 3, label: '3d', step: 'day', stepmode: 'backward' },
           { count: 7, label: '7d', step: 'day', stepmode: 'backward' },
           { count: 15, label: '15d', step: 'day', stepmode: 'backward' },
-          { step: 'all', label: 'Tudo' },
+          { step: 'all', label: 'All' },
         ],
       },
     },
     yaxis: {
-      title: 'Elevação (°)',
+      title: 'Elevation (°)',
       gridcolor: THEME.grid,
       zeroline: false,
     },
@@ -139,7 +138,7 @@ export function renderElevationTimeline(simData, containerId = 'chart-elevation'
 }
 
 /**
- * 2. Skyplot Polar 360° (#chart-sky)
+ * 2. 360° Polar Skyplot (#chart-sky)
  */
 export function renderSkyplotPolar(simData, containerId = 'chart-sky') {
   const Plotly = getPlotly();
@@ -156,51 +155,50 @@ export function renderSkyplotPolar(simData, containerId = 'chart-sky') {
   const horizonMaskTrace = {
     type: 'scatterpolar',
     mode: 'lines',
-    name: 'Relevo do Horizonte',
+    name: 'LOLA Horizon Relief',
     theta: [...azFwd, ...azRev],
     r: [...elFwd, ...azRev.map(() => 0)],
     fill: 'toself',
     fillcolor: THEME.horizonFill,
     line: { color: THEME.horizonLine, width: 1.5 },
-    hovertemplate: 'Azimute: %{theta:.0f}°<br>Relevo: %{r:.2f}°<extra>Horizonte</extra>',
+    hovertemplate: 'Azimuth: %{theta:.0f}°<br>Horizon: %{r:.2f}°<extra>Horizon</extra>',
   };
 
   const sunLit = timeline.filter((p) => p.sun_visible);
   const sunLitTrace = {
     type: 'scatterpolar',
     mode: 'lines+markers',
-    name: '☀️ Sol (Visível)',
+    name: '☀️ Sun (Visible)',
     theta: sunLit.map((p) => p.sun_azimuth_deg),
     r: sunLit.map((p) => Math.max(0, p.sun_elevation_deg)),
     marker: { size: 5, color: THEME.sunLit },
     line: { color: THEME.sunLit, width: 2 },
-    hovertemplate: 'Azimute: %{theta:.1f}°<br>Elevação Sol: %{r:.2f}°<extra>Iluminado</extra>',
+    hovertemplate: 'Azimuth: %{theta:.1f}°<br>Sun Elev: %{r:.2f}°<extra>Sunlit</extra>',
   };
 
   const sunBlocked = timeline.filter((p) => !p.sun_visible);
   const sunBlockedTrace = {
     type: 'scatterpolar',
     mode: 'markers',
-    name: '🌑 Sol (Bloqueado/Sombra)',
+    name: '🌑 Sun (Blocked/Shadow)',
     theta: sunBlocked.map((p) => p.sun_azimuth_deg),
     r: sunBlocked.map((p) => Math.max(0, p.sun_elevation_deg)),
     marker: { size: 4, symbol: 'x', color: THEME.sunShadow },
-    hovertemplate: 'Azimute: %{theta:.1f}°<br>Elevação Sol: %{r:.2f}°<extra>Sombra</extra>',
+    hovertemplate: 'Azimuth: %{theta:.1f}°<br>Sun Elev: %{r:.2f}°<extra>Shadow</extra>',
   };
 
   const earthVis = timeline.filter((p) => p.earth_visible);
   const earthTrace = {
     type: 'scatterpolar',
     mode: 'lines+markers',
-    name: '🌍 Terra (Sinal DTE)',
+    name: '🌍 Earth (DTE Link)',
     theta: earthVis.map((p) => p.earth_azimuth_deg),
     r: earthVis.map((p) => Math.max(0, p.earth_elevation_deg)),
     marker: { size: 5, color: THEME.earth, symbol: 'diamond' },
     line: { color: THEME.earth, width: 1.8, dash: 'dot' },
-    hovertemplate: 'Azimute: %{theta:.1f}°<br>Elevação Terra: %{r:.2f}°<extra>Terra</extra>',
+    hovertemplate: 'Azimuth: %{theta:.1f}°<br>Earth Elev: %{r:.2f}°<extra>Earth DTE</extra>',
   };
 
-  // Ajusta o alcance radial dinamicamente (ex: 18° no polo sul, até ~85° em latitudes baixas como Apollo 11)
   const maxBodyEl = Math.max(
     18,
     ...sunLit.map((p) => p.sun_elevation_deg || 0),
@@ -244,7 +242,7 @@ export function renderSkyplotPolar(simData, containerId = 'chart-sky') {
 }
 
 /**
- * 3. Gráfico Comparador de Cenários (#chart-compare)
+ * 3. Multi-Scenario Comparison Chart (#chart-compare)
  */
 export function renderComparisonChart(scenarios = [], containerId = 'chart-compare') {
   const Plotly = getPlotly();
@@ -262,14 +260,14 @@ export function renderComparisonChart(scenarios = [], containerId = 'chart-compa
   const traces = [
     {
       type: 'bar',
-      name: '☀️ Iluminação Solar (%)',
+      name: '☀️ Solar Illumination (%)',
       x: labels,
       y: scenarios.map((s) => s.sun_fraction_pct),
       marker: { color: THEME.sunLit },
     },
     {
       type: 'bar',
-      name: '🌍 Visibilidade Terra (%)',
+      name: '🌍 Earth DTE Visibility (%)',
       x: labels,
       y: scenarios.map((s) => s.earth_fraction_pct),
       marker: { color: THEME.earth },
@@ -283,7 +281,7 @@ export function renderComparisonChart(scenarios = [], containerId = 'chart-compa
     font: { color: THEME.text, family: 'system-ui, sans-serif', size: 12 },
     margin: { t: 25, b: 45, l: 45, r: 20 },
     legend: { orientation: 'h', y: 1.18, x: 0 },
-    yaxis: { range: [0, 100], title: '% da Janela', gridcolor: THEME.grid },
+    yaxis: { range: [0, 100], title: '% of Window', gridcolor: THEME.grid },
     xaxis: { gridcolor: THEME.grid },
   };
 
