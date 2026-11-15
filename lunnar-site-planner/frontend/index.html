@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Lunar Site Planner · NASA Space Apps</title>
+  <title>Lunar Site Planner · South Pole Mission Navigator</title>
   <meta name="description" content="Compare landing sites and dates at the lunar south pole: Sun, Earth, power, and communications.">
 
   <script>
@@ -58,10 +58,44 @@
   <header class="topbar">
     <p class="topbar-title">Lunar Site Planner</p>
 
-    <a class="nasa-mark" href="https://www.nasa.gov" target="_blank" rel="noopener" aria-label="NASA">
-      <!-- Place the exported NASA logo at assets/nasa-logo.svg -->
-      <img src="assets/nasa-logo.svg" alt="NASA" width="102" height="102"
-           onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'nasa-fallback',textContent:'NASA'}))">
+    <!-- Custom Original Mission Patch SVG (Zero NASA Branding) -->
+    <a class="nasa-mark" href="#resultados" aria-label="Lunar Site Planner Home" title="Lunar Site Planner · South Pole Navigator">
+      <svg viewBox="0 0 100 100" width="92" height="92" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Lunar Site Planner Emblem">
+        <defs>
+          <radialGradient id="lsp-bg" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="#111827"/>
+            <stop offset="100%" stop-color="#05070f"/>
+          </radialGradient>
+          <linearGradient id="lsp-moon" x1="25%" y1="20%" x2="80%" y2="85%">
+            <stop offset="0%" stop-color="#f8fafc"/>
+            <stop offset="55%" stop-color="#94a3b8"/>
+            <stop offset="100%" stop-color="#1e293b"/>
+          </linearGradient>
+          <linearGradient id="lsp-orbit" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#38bdf8"/>
+            <stop offset="100%" stop-color="#3ddc97"/>
+          </linearGradient>
+        </defs>
+        <!-- Outer Mission Ring -->
+        <circle cx="50" cy="50" r="45" fill="url(#lsp-bg)" stroke="#666668" stroke-width="2.5"/>
+        <circle cx="50" cy="50" r="39" stroke="#334155" stroke-width="1" stroke-dasharray="3 3"/>
+        <!-- Selenographic Crosshairs -->
+        <path d="M50 7V15M50 85V93M7 50H15M85 50H93" stroke="#666668" stroke-width="2" stroke-linecap="round"/>
+        <!-- Lunar Sphere -->
+        <circle cx="50" cy="48" r="21" fill="url(#lsp-moon)"/>
+        <!-- Subtle Lunar Craters -->
+        <circle cx="43" cy="41" r="3.5" fill="#475569" opacity="0.45"/>
+        <circle cx="57" cy="46" r="2.4" fill="#475569" opacity="0.4"/>
+        <circle cx="48" cy="55" r="4.2" fill="#334155" opacity="0.45"/>
+        <!-- Polar TLI Orbit Arc -->
+        <ellipse cx="50" cy="50" rx="34" ry="12" transform="rotate(-28 50 50)" stroke="url(#lsp-orbit)" stroke-width="2.4" stroke-linecap="round"/>
+        <!-- Solar Ray Vector (Gold) -->
+        <path d="M18 24L43 65" stroke="#ffd24a" stroke-width="1.6" stroke-dasharray="2.5 2.5"/>
+        <circle cx="18" cy="24" r="3.2" fill="#ffd24a"/>
+        <!-- South Pole Landing Beacon (89.9°S) -->
+        <circle cx="50" cy="69" r="6.5" stroke="#3ddc97" stroke-width="1.5" opacity="0.75"/>
+        <circle cx="50" cy="69" r="3.2" fill="#3ddc97"/>
+      </svg>
     </a>
 
     <fieldset class="mode-switch" aria-label="User profile">
@@ -139,7 +173,7 @@
         <div class="sim-head">
           <div>
             <h3 id="h-sim3d">3D Orbital &amp; Topographic Simulation</h3>
-            <p class="eyebrow" id="sim-eyebrow">NASA LRO/LOLA &amp; JPL SPICE Engine</p>
+            <p class="eyebrow" id="sim-eyebrow">LRO/LOLA DEM &amp; Ephemeris Engine</p>
           </div>
           <span id="terrain-badge" class="hint font-mono"></span>
         </div>
@@ -176,7 +210,7 @@
               <div class="row">
                 <div>
                   <label for="days">Duration (days)</label>
-                  <input id="days" name="days" type="number" min="1" max="90" value="30">
+                  <input id="days" name="days" type="number" min="1" max="90" value="14">
                 </div>
                 <div class="only-engineer">
                   <label for="step">Step (min)</label>
@@ -256,13 +290,19 @@
 
   <footer class="footer">
     <div class="footer-brand">
-      <span class="nasa-mark small">
-        <img src="assets/nasa-logo.svg" alt="" width="80" height="80"
-             onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'nasa-fallback',textContent:'NASA'}))">
+      <span class="nasa-mark small" aria-hidden="true">
+        <svg viewBox="0 0 100 100" width="60" height="60" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="50" cy="50" r="45" fill="#060a18" stroke="#666668" stroke-width="3"/>
+          <circle cx="50" cy="48" r="20" fill="#cbd5e1"/>
+          <ellipse cx="50" cy="50" rx="34" ry="12" transform="rotate(-28 50 50)" stroke="#38bdf8" stroke-width="3"/>
+          <circle cx="50" cy="68" r="4" fill="#3ddc97"/>
+        </svg>
       </span>
       <p>Lunar Landing Site Navigator</p>
     </div>
-    <p class="footer-data">Data: NASA/JPL SPICE (DE421, MOON_ME_DE421) and LRO/LOLA DEM. Built for the NASA Space Apps Challenge 2026.</p>
+    <p class="footer-data">
+      Open Science Data Sources: JPL SPICE Ephemerides (DE421, MOON_ME_DE421) and LRO/LOLA Digital Elevation Model. Independent project built for the 2026 Space Apps Challenge (does not use or modify agency branding/logos). AI Disclosure: Code architecture, 3D WebGL shaders, and UI components were developed and refined with AI pair-programming assistance (Google Gemini).
+    </p>
   </footer>
 </body>
 </html>
