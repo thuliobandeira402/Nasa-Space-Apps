@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from rasterio.enums import Resampling
 from skyfield import almanac
 
-from data_loader import LOLA_DEM_PATH, get_planetary_context, get_sites_catalog
+from data_loader import LOLA_DEM_PATH, get_planetary_context
 from ephemeris_engine import calcular_visibilidade
 from metrics_analyzer import analisar_metricas
 from sites_catalog import SITES_CATALOG, get_site_by_id
@@ -364,22 +364,18 @@ def _normalizar_lon(lon: float) -> float:
     return ((lon + 180.0) % 360.0) - 180.0
 
 
-def _declividade_conhecida(site_id: str | None) -> float | None:
-    if not site_id:
-        return None
-    alias = {"im1_nova_c": "im1_malapert_a"}
-    alvo = alias.get(site_id, site_id)
-    for item in get_sites_catalog():
-        if item.get("id") == alvo:
-            return item.get("declividade_graus")
-    return None
-
-
 @app.post("/simular-pouso")
 def simular_pouso(req: PousoRequest):
     lon = _normalizar_lon(req.lon)
-    site_id = identificar_site_conhecido(req.lat, lon)
-    site = get_site_by_id(site_id) if site_id else None
+
+    site_req = get_site_by_id(req.site_id) if (req.site_id and req.site_id != "custom") else None
+    if site_req and abs(req.lat - site_req["lat"]) < 0.01 and abs(lon - site_req["lon"]) < 0.01:
+        site_id = site_req["id"]
+        site = site_req
+    else:
+        site_id = identificar_site_conhecido(req.lat, lon)
+        site = get_site_by_id(site_id) if site_id else None
+
     nome = (req.site_name or "").strip() or (site["name"] if site else NOME_PADRAO)
 
     passo_horas = max(1, min(24, round(req.step_min / 60)))
@@ -430,8 +426,8 @@ def simular_pouso(req: PousoRequest):
     max_sun_h = m["maior_janela_continua_sol_horas"]
 
     slope = perfil.get("slope_deg_real")
-    if slope is None:
-        slope = _declividade_conhecida(site_id)
+    if slope is None and site:
+        slope = site.get("slope_deg")
 
     seguranca = None if slope is None else (slope <= 15.0)
     iluminacao = (sun_pct >= 50.0) or (max_sun_h >= 156 and sun_pct >= 40.0)
@@ -456,7 +452,7 @@ def simular_pouso(req: PousoRequest):
         "days": req.days,
         "step_min": passo_h * 60,
         "slope_deg": slope,
-        "sunset_duration_min": None,
+        "sunset_duration_min": m.get("duracao_crepusculo_min"),
         "sun_fraction_pct": sun_pct,
         "earth_fraction_pct": earth_pct,
         "max_continuous_sun_hours": max_sun_h,
@@ -472,8 +468,8 @@ def simular_pouso(req: PousoRequest):
         "veredito_backend": m["veredito"],
         "assumptions": [
             f"Lunar Ephemerides & Orientation: NASA/JPL SPICE (DE421, MOON_ME_DE421), {passo_h}h integration step.",
-            f"360° Horizon & 3D Terrain: {perfil['modo_terreno']}.",
-            "Apparent Solar Disc: 0.265° semidiameter without atmospheric refraction; Direct-to-Earth (DTE) evaluated via geometric line-of-sight (0° terrain clearance; 2° RF multipath margin noted for link budget).",
+            f"360° Horizon (100 km raycast with lunar curvature correction) & 3D Local Terrain (36 × 36 km, 5×5 median baseline slope): {perfil['modo_terreno']}.",
+            "Apparent Solar Disc: 0.265° semidiameter without atmospheric refraction (illuminated disc fraction weighted for solar power); Direct-to-Earth (DTE) evaluated via geometric line-of-sight (0° terrain clearance; 2° RF multipath margin noted for link budget).",
             "NASA GO Criteria (Artemis/CLPS): Touchdown slope ≤ 15°, Earth DTE link ≥ 50%, and Solar availability ≥ 50% (or ≥ 156h continuous sunlit sortie window with ≥ 40% monthly illumination).",
             m["contexto_educacional"],
         ],

@@ -22,10 +22,18 @@ def identificar_site_conhecido(lat: float, lon: float, tolerancia_graus: float =
     return melhor_id
 
 
+def _interpolar_horizonte(horizonte_360: np.ndarray, azimutes: np.ndarray) -> np.ndarray:
+    """Interpolação linear circular contínua no perfil de horizonte 0..360°."""
+    az_norm = np.mod(azimutes, 360.0)
+    xp = np.arange(361, dtype=float)
+    fp = np.append(horizonte_360, horizonte_360[0])
+    return np.interp(az_norm, xp, fp)
+
+
 def gerar_perfil_horizonte_360(lat: float, lon: float, elevacao_m: float = 0.0) -> dict:
     """
-    Obtém o perfil topográfico 360° (raio 100 km) e a malha 3D exclusivamente do GeoTIFF
-    real NASA LRO/LOLA para a região polar sul (lat <= -80°).
+    Obtém o perfil topográfico 360° (raio 100 km) e a malha 3D (36 km x 36 km)
+    exclusivamente do GeoTIFF real NASA LRO/LOLA para a região polar sul (lat <= -80°).
     Fora da cobertura polar do DEM (-80°S), utiliza esfera lunar de referência (0°),
     sem gerar relevo fictício ou sintético.
     """
@@ -81,11 +89,8 @@ def aplicar_obstrucao_terreno(dados_efemerides: dict, perfil_horizonte: dict) ->
     terra_alt = np.array(dados_efemerides["terra_elevacao_graus"], dtype=float)
     terra_az = np.array(dados_efemerides["terra_azimute_graus"], dtype=float)
 
-    sol_az_idx = np.floor(sol_az).astype(int) % 360
-    terra_az_idx = np.floor(terra_az).astype(int) % 360
-
-    horizonte_direcao_sol = horizonte_360[sol_az_idx]
-    horizonte_direcao_terra = horizonte_360[terra_az_idx]
+    horizonte_direcao_sol = _interpolar_horizonte(horizonte_360, sol_az)
+    horizonte_direcao_terra = _interpolar_horizonte(horizonte_360, terra_az)
 
     sol_visivel = (sol_alt + 0.265) > horizonte_direcao_sol
     terra_visivel = terra_alt > horizonte_direcao_terra

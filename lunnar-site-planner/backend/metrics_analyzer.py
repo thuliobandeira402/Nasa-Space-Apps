@@ -1,6 +1,40 @@
 # backend/metrics_analyzer.py
 import numpy as np
 
+SOLAR_SEMIDIAMETER_DEG = 0.265
+
+
+def _fracao_disco_solar(
+    alt_sun_deg: np.ndarray,
+    mask_deg: np.ndarray,
+    r_deg: float = SOLAR_SEMIDIAMETER_DEG,
+) -> np.ndarray:
+    """Fração geométrica visível [0..1] do disco solar aparente acima da máscara topográfica."""
+    h = alt_sun_deg - mask_deg
+    u = np.clip(h / r_deg, -1.0, 1.0)
+    frac = 0.5 + (u * np.sqrt(np.maximum(0.0, 1.0 - u * u)) + np.arcsin(u)) / np.pi
+    return np.where(h <= -r_deg, 0.0, np.where(h >= r_deg, 1.0, frac))
+
+
+def _calcular_duracao_crepusculo_min(
+    alt_sun: np.ndarray,
+    horizonte_sol: np.ndarray,
+    passo_horas: int,
+) -> float | None:
+    """Duração mediana (minutos) para o disco solar aparente (0.53°) cruzar o horizonte local."""
+    if len(alt_sun) < 2:
+        return None
+    folga = alt_sun - horizonte_sol
+    cruzamentos = np.where(np.diff(np.signbit(folga)))[0]
+    if len(cruzamentos) == 0:
+        return None
+    taxas_deg_h = np.abs(folga[cruzamentos + 1] - folga[cruzamentos]) / max(1, passo_horas)
+    taxas_validas = taxas_deg_h[taxas_deg_h > 1e-4]
+    if len(taxas_validas) == 0:
+        return None
+    duracoes_min = (2.0 * SOLAR_SEMIDIAMETER_DEG / taxas_validas) * 60.0
+    return round(float(np.median(duracoes_min)), 1)
+
 
 def _analisar_proximo_evento(vetor_visivel: np.ndarray, passo_horas: int, nome_astro: str) -> dict:
     """
@@ -27,7 +61,7 @@ def _analisar_proximo_evento(vetor_visivel: np.ndarray, passo_horas: int, nome_a
             tipo = "SUNRISE" if nome_astro == "Sol" else "EARTHRISE"
             desc = f"{horas}h until {'sunrise' if nome_astro == 'Sol' else 'Earth signal acquisition'}"
     else:
-        horas = int(len(vetor_visivel) * passo_horas)
+        horas = int(max(1, len(vetor_visivel) - 1) * passo_horas)
         if visivel_inicial:
             tipo = "CONTINUOUS_VISIBLE"
             desc = f"Continuous {'solar illumination' if nome_astro == 'Sol' else 'Earth DTE link'} across window ({horas}h)"
@@ -51,8 +85,8 @@ def _calcular_maior_janela_continua(vetor_visivel: np.ndarray, passo_horas: int)
     inicios = np.where(diffs == 1)[0]
     fins = np.where(diffs == -1)[0]
     duracoes = (fins - inicios) * passo_horas
-    return int(np.max(duracoes))
-
+    limite_janela_h = max(passo_horas, (len(vetor_visivel) - 1) * passo_horas)
+    return int(min(np.max(duracoes), limite_janela_h))
 
 def analisar_metricas(dados: dict) -> dict:
     """
@@ -63,11 +97,10 @@ def analisar_metricas(dados: dict) -> dict:
     alt_sun = np.array(dados.get("sol_elevacao_graus", []), dtype=float)
     alt_earth = np.array(dados.get("terra_elevacao_graus", []), dtype=float)
     dist_earth = np.array(dados.get("distancia_terra_km", []), dtype=float)
+    horizonte_sol = np.array(dados.get("horizonte_direcao_sol_graus", np.zeros_like(alt_sun)), dtype=float)
 
     if len(alt_sun) == 0:
         raise ValueError("Ephemeris time series are empty.")
-
-    SOLAR_SEMIDIAMETER_DEG = 0.265
 
     sol_visivel_sem_relevo = (alt_sun + SOLAR_SEMIDIAMETER_DEG) > 0.0
     sol_visivel = np.array(dados.get("sol_visivel_bool", sol_visivel_sem_relevo), dtype=bool)
@@ -80,9 +113,10 @@ def analisar_metricas(dados: dict) -> dict:
     pct_comunicacao_real = float(np.mean(terra_visivel) * 100.0)
     latencia_media_seg = float(np.mean(dist_earth) * 2.0 / 299792.458) if len(dist_earth) > 0 else 2.56
 
+    disc_frac = _fracao_disco_solar(alt_sun, horizonte_sol, SOLAR_SEMIDIAMETER_DEG)
     rad_sun = np.radians(np.clip(alt_sun, 0.0, 90.0))
-    potencia_horiz = np.where(sol_visivel, np.sin(rad_sun) * 100.0, 0.0)
-    potencia_vert = np.where(sol_visivel, np.cos(rad_sun) * 100.0, 0.0)
+    potencia_horiz = np.where(sol_visivel, disc_frac * np.sin(rad_sun) * 100.0, 0.0)
+    potencia_vert = np.where(sol_visivel, disc_frac * np.cos(rad_sun) * 100.0, 0.0)
 
     media_horiz_pct = float(np.mean(potencia_horiz))
     media_vert_pct = float(np.mean(potencia_vert))
@@ -92,6 +126,7 @@ def analisar_metricas(dados: dict) -> dict:
 
     maior_janela_sol_h = _calcular_maior_janela_continua(sol_visivel, passo_horas)
     maior_janela_noite_h = _calcular_maior_janela_continua(~sol_visivel, passo_horas)
+    duracao_crepusculo_min = _calcular_duracao_crepusculo_min(alt_sun, horizonte_sol, passo_horas)
 
     elevacao_max_sol = float(np.max(alt_sun))
     elevacao_min_sol = float(np.min(alt_sun))
@@ -119,6 +154,7 @@ def analisar_metricas(dados: dict) -> dict:
         "evento_terra": evento_terra,
         "maior_janela_continua_sol_horas": maior_janela_sol_h,
         "maior_noite_continua_horas": maior_janela_noite_h,
+        "duracao_crepusculo_min": duracao_crepusculo_min,
         "latencia_ida_volta_seg": round(latencia_media_seg, 2),
         "contexto_educacional": (
             f"Accounting for local LOLA topography, the Sun illuminates the landing site for {pct_luz_real:.1f}% of the window "

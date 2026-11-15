@@ -9,6 +9,10 @@ class LunarSite(BaseModel):
     lat: float = Field(..., ge=-90.0, le=90.0, description="Selenographic latitude in degrees")
     lon: float = Field(..., ge=-180.0, le=180.0, description="Selenographic longitude in degrees")
     elevation_m: float = Field(..., description="Mean elevation relative to LOLA datum (m)")
+    slope_deg: float | None = Field(
+        default=None,
+        description="Documented historical touchdown slope (deg) for baseline sites outside polar LOLA DEM",
+    )
     mission_context: str = Field(..., description="Associated NASA mission or program")
     scientific_highlight: str = Field(..., description="Scientific, illumination, and communications significance")
     expected_sunlight_pct: float = Field(..., description="Estimated mean annual solar illumination (%)")
@@ -95,6 +99,7 @@ CURATED_LUNAR_SITES: list[LunarSite] = [
         lat=0.6741,
         lon=23.4730,
         elevation_m=-1850.0,
+        slope_deg=2.0,
         mission_context="NASA Apollo 11 (1969)",
         scientific_highlight="Equatorial baseline for comparison: rigid ~14-Earth-day sunlit period followed by ~14 Earth days of lunar night.",
         expected_sunlight_pct=50.0,

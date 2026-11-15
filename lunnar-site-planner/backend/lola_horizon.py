@@ -86,7 +86,7 @@ def extrair_malha_terreno_lola(
 ) -> dict:
     """
     Extrai malha 3D real (128x128 cobrindo 36 km x 36 km) do GeoTIFF NASA LOLA
-    e calcula a declividade local de pouso no ponto central nativo.
+    e calcula a declividade local mediana no ponto central nativo.
     """
     import rasterio
     from rasterio.windows import from_bounds
@@ -130,7 +130,7 @@ def extrair_malha_terreno_lola(
     if patch_local.shape[0] >= 3 and patch_local.shape[1] >= 3:
         dy_loc, dx_loc = np.gradient(patch_local, pixel_m)
         slopes_patch = np.degrees(np.arctan(np.hypot(dx_loc, dy_loc)))
-        slope_deg = float(np.round(np.percentile(slopes_patch, 25), 2))
+        slope_deg = float(np.round(np.percentile(slopes_patch, 50), 2))
     else:
         slope_deg = 5.0
 
