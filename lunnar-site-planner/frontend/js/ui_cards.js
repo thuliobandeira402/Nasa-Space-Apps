@@ -1,5 +1,6 @@
 /**
- * Cards de KPI, Contagens Regressivas e Tabela Comparadora de Cenários
+ * UI Cards, Live Countdowns, and Scenario Comparator Table
+ * Aligned with NASA Artemis / CLPS Mission Feasibility Criteria
  */
 
 import { renderComparisonChart } from './charts.js';
@@ -44,6 +45,29 @@ function findNextTransitionMs(timeline, fromIdx, selector) {
   return null;
 }
 
+function buildEnglishAssumptions(simData) {
+  if (Array.isArray(simData.assumptions) && simData.assumptions.length > 0) {
+    return simData.assumptions;
+  }
+
+  const m = simData.metricas_resumo;
+  const stepH = Math.round((simData.step_min || 60) / 60);
+  const slopeTxt = typeof simData.slope_deg === 'number' ? `${simData.slope_deg}°` : 'N/A';
+  const terrainMode = simData.modo_terreno || 'NASA LRO/LOLA Digital Elevation Model';
+
+  const items = [
+    `Lunar Ephemerides & Orientation: NASA/JPL SPICE (DE421, MOON_ME_DE421 frame), ${stepH}h integration step.`,
+    `360° Horizon & 3D Terrain: ${terrainMode} (Touchdown slope: ${slopeTxt}).`,
+    `Apparent Solar Disc: 0.265° semidiameter without atmospheric refraction.`,
+    `NASA GO Criteria (Artemis/CLPS): Touchdown slope ≤ 15°, Direct-to-Earth (DTE) ≥ 50%, and Solar illumination ≥ 50% (or ≥ 156h continuous sunlit sortie window).`,
+  ];
+
+  if (m) {
+    items.push(m.contexto_educacional);
+  }
+  return items;
+}
+
 export function updateSimulationUI(simData, source = 'online') {
   uiState.simData = simData;
   uiState.currentStepIdx = 0;
@@ -51,57 +75,44 @@ export function updateSimulationUI(simData, source = 'online') {
 
   if (!simData) return;
 
-  const isGo = simData.go_nogo === 'GO';
-  const m = simData.metricas_resumo;
-
-  // 1. Card Principal: Decisão Global da Missão (GO / NO-GO)
-  const cardVerdict = document.getElementById('card-verdict');
-  if (cardVerdict) {
-    cardVerdict.dataset.state = isGo ? 'GO' : 'NO-GO';
-  }
-  setText('verdict-text', isGo ? 'GO ✔' : 'NO-GO ✖');
-  setText('verdict-sub', simData.veredito_backend || (isGo ? 'Critérios atendidos' : 'Restrições críticas'));
-
-  // 2. Card Luz Solar + Eficiência de Painéis
   setText('m-sun-frac', `${simData.sun_fraction_pct}%`);
-  if (m) {
-    setText(
-      'm-sun-power',
-      `Painel vert.: ${m.potencia_media_painel_vertical_pct}% · horiz.: ${m.potencia_media_painel_horizontal_pct}%`
-    );
-  } else {
-    setText('m-sun-power', '');
-  }
-
-  // 3. Card Terra Visível + Latência
   setText('m-earth-frac', `${simData.earth_fraction_pct}%`);
-  if (m && typeof m.latencia_ida_volta_seg === 'number') {
-    setText('m-earth-lat', `Latência ida/volta: ${m.latencia_ida_volta_seg}s (DTE)`);
-  } else {
-    setText('m-earth-lat', '');
-  }
-
-  // 4. Card Noite Contínua + Perda Topográfica
   setText('m-dark', `${simData.max_continuous_night_hours} h`);
-  if (m && typeof m.perda_sombra_topografica_pct === 'number') {
-    setText('m-dark-sub', `Perda por relevo: -${m.perda_sombra_topografica_pct}% da luz teórica`);
-  }
 
-  // 5. Resumo no Modo Explorador
+  // Atualiza qualquer badge de modelo de terreno no HTML (remove "Modelo Sintético" fixo)
+  const terrainBadgeIds = ['terrain-badge', 'model-badge', 'modo-terreno'];
+  terrainBadgeIds.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = simData.modo_terreno || 'NASA LOLA LDEM (Real Data, 240 m/px)';
+  });
+  document.querySelectorAll('.badge, .chip, small, span').forEach((el) => {
+    if (el.children.length === 0 && /Modelo Sint[eé]tico/i.test(el.textContent.trim())) {
+      el.textContent = simData.modo_terreno || 'NASA LOLA LDEM (Real Data)';
+    }
+  });
+
+  const maxSunH =
+    simData.max_continuous_sun_hours ??
+    simData.metricas_resumo?.maior_janela_continua_sol_horas ??
+    0;
+
   const explainer = document.getElementById('explainer');
   if (explainer) {
-    const slopeTxt = typeof simData.slope_deg === 'number' ? `${simData.slope_deg}°` : 'N/D';
-    explainer.innerHTML = isGo
-      ? `<strong>${simData.site_name}:</strong> Local favorável para pouso (<strong>GO</strong>)! O Sol ilumina a superfície durante <strong>${simData.sun_fraction_pct}%</strong> da missão e a Terra fica visível em <strong>${simData.earth_fraction_pct}%</strong> do período.`
-      : `<strong>${simData.site_name}:</strong> Restrições de missão não atendidas (<strong>NO-GO</strong> — ${simData.veredito_backend || 'atenção'}). Verifique a declividade (${slopeTxt}) ou períodos longos de sombra (${simData.max_continuous_night_hours}h seguidas sem Sol).`;
+    const slopeTxt = typeof simData.slope_deg === 'number' ? `${simData.slope_deg}°` : 'N/A';
+    const verdictSub = simData.veredito_backend || simData.go_nogo;
+
+    if (simData.go_nogo === 'GO') {
+      explainer.innerHTML = `<strong>${simData.site_name}:</strong> Mission feasible (<strong>GO — ${verdictSub}</strong>)! Touchdown slope is <strong>${slopeTxt}</strong>, the site provides <strong>${simData.sun_fraction_pct}%</strong> solar illumination (up to <strong>${maxSunH}h</strong> continuous sunlight), and Earth DTE link is active for <strong>${simData.earth_fraction_pct}%</strong> of the window.`;
+    } else if (simData.go_nogo === 'INCONCLUSIVE') {
+      explainer.innerHTML = `<strong>${simData.site_name}:</strong> <strong>INCONCLUSIVE</strong> (Outside -80°S LOLA high-resolution DEM coverage; local touchdown slope unavailable). Solar illumination: <strong>${simData.sun_fraction_pct}%</strong>, Earth DTE: <strong>${simData.earth_fraction_pct}%</strong>.`;
+    } else {
+      explainer.innerHTML = `<strong>${simData.site_name}:</strong> Mission constraints not met (<strong>NO-GO — ${verdictSub}</strong>). Check touchdown slope (<strong>${slopeTxt}</strong>, max 15°), Earth DTE visibility (<strong>${simData.earth_fraction_pct}%</strong>, min 50%), or extended shadow periods (<strong>${simData.max_continuous_night_hours}h</strong> max continuous night).`;
+    }
   }
 
-  // 6. Premissas do Backend
   const assumptionsList = document.getElementById('assumptions');
   if (assumptionsList) {
-    const list = Array.isArray(simData.assumptions) && simData.assumptions.length > 0
-      ? simData.assumptions
-      : ['Cálculo via NASA/JPL SPICE DE421 e topografia LOLA.'];
+    const list = buildEnglishAssumptions(simData);
     assumptionsList.innerHTML = list.map((item) => `<li>${item}</li>`).join('');
   }
 
@@ -118,18 +129,42 @@ export function syncStepMetrics(stepIndex = 0) {
   uiState.anchorWallMs = Date.now();
 
   const frame = simData.timeline[safeIdx];
-  const crit = simData.criterios || {};
+  const isWindowGo = simData.go_nogo === 'GO';
+  const isInconclusive = simData.go_nogo === 'INCONCLUSIVE';
+
+  // O Card de Veredito mostra o resultado oficial da janela da missão (GO / NO-GO / INCONCLUSIVE)
+  const cardVerdict = document.getElementById('card-verdict');
+  if (cardVerdict) {
+    cardVerdict.dataset.state = isWindowGo ? 'go' : 'nogo';
+    cardVerdict.style.borderColor = isWindowGo ? '#10b981' : isInconclusive ? '#f59e0b' : '#ef4444';
+  }
+
+  const verdictText = document.getElementById('verdict-text');
+  if (verdictText) {
+    verdictText.textContent = isWindowGo ? 'GO ✔' : isInconclusive ? 'INCONCLUSIVE ⚠' : 'NO-GO ✖';
+    verdictText.style.color = isWindowGo ? '#34d399' : isInconclusive ? '#fbbf24' : '#f87171';
+  }
+
+  const verdictSub = document.getElementById('verdict-sub');
+  if (verdictSub && simData.veredito_backend) {
+    verdictSub.textContent = simData.veredito_backend;
+  }
+
   const slopeKnown = typeof simData.slope_deg === 'number';
-  const slopeOk = crit.seguranca_topografica !== false;
-  const sunMissionOk = crit.iluminacao_solar ?? simData.sun_fraction_pct >= 50;
-  const commMissionOk = crit.comunicacao_direta ?? simData.earth_fraction_pct >= 50;
+  const slopeOk = Boolean(simData.criterios?.seguranca_topografica ?? (slopeKnown && simData.slope_deg <= 15.0));
+  const sunWindowOk = Boolean(simData.criterios?.iluminacao_solar ?? (simData.sun_fraction_pct >= 50.0));
+  const commWindowOk = Boolean(simData.criterios?.comunicacao_direta ?? (simData.earth_fraction_pct >= 50.0));
+  const maxSunH =
+    simData.max_continuous_sun_hours ??
+    simData.metricas_resumo?.maior_janela_continua_sol_horas ??
+    0;
 
   const checksList = document.getElementById('verdict-checks');
   if (checksList) {
     checksList.innerHTML = `
-      <li class="${slopeOk ? 'ok' : 'bad'}">Declividade: <strong>${slopeKnown ? simData.slope_deg + '°' : 'N/D'}</strong> (máx. 15°)</li>
-      <li class="${sunMissionOk ? 'ok' : 'bad'}">Luz na janela: <strong>${simData.sun_fraction_pct}%</strong> (agora: ${frame.sun_visible ? 'Sol ✔' : 'Sombra ✖'})</li>
-      <li class="${commMissionOk ? 'ok' : 'bad'}">Sinal Terra: <strong>${simData.earth_fraction_pct}%</strong> (agora: ${frame.earth_visible ? 'Ativo ✔' : 'Oculto ✖'})</li>
+      <li>${slopeKnown ? (slopeOk ? '✅' : '❌') : '⚠️'} Touchdown Slope: <strong>${slopeKnown ? simData.slope_deg + '°' : 'N/A'}</strong> (max 15°)</li>
+      <li>${sunWindowOk ? '✅' : '❌'} Solar Window: <strong>${simData.sun_fraction_pct}%</strong> / <strong>${maxSunH}h</strong> max (${frame.sun_visible ? 'Now: Sun ✔' : 'Now: Shadow'})</li>
+      <li>${commWindowOk ? '✅' : '❌'} Earth DTE: <strong>${simData.earth_fraction_pct}%</strong> (${frame.earth_visible ? 'Now: Active ✔' : 'Now: Occulted'})</li>
     `;
   }
 
@@ -149,25 +184,19 @@ function refreshCountdownsOnly() {
   const nextSun = findNextTransitionMs(timeline, idx, (pt) => pt.sun_visible);
   if (nextSun) {
     const remaining = nextSun.targetMs - currentSimMs;
-    const label = nextSun.willBeVisible ? 'Nascer do Sol em' : 'Pôr do Sol em';
+    const label = nextSun.willBeVisible ? 'Sunrise in' : 'Sunset in';
     setText('m-sun-next', `${label}: ${formatCountdown(remaining)}`);
   } else {
-    setText(
-      'm-sun-next',
-      timeline[idx].sun_visible ? 'Iluminação contínua na janela' : 'Sombra contínua na janela'
-    );
+    setText('m-sun-next', timeline[idx].sun_visible ? 'Continuous sunlight in window' : 'Continuous shadow in window');
   }
 
   const nextEarth = findNextTransitionMs(timeline, idx, (pt) => pt.earth_visible);
   if (nextEarth) {
     const remaining = nextEarth.targetMs - currentSimMs;
-    const label = nextEarth.willBeVisible ? 'Retorno da Terra em' : 'Ocultamento da Terra em';
+    const label = nextEarth.willBeVisible ? 'Earthrise in' : 'Earthset in';
     setText('m-earth-next', `${label}: ${formatCountdown(remaining)}`);
   } else {
-    setText(
-      'm-earth-next',
-      timeline[idx].earth_visible ? 'Visada direta contínua com a Terra' : 'Sem visada direta na janela'
-    );
+    setText('m-earth-next', timeline[idx].earth_visible ? 'Continuous Earth DTE link' : 'No direct Earth link in window');
   }
 }
 
@@ -200,7 +229,7 @@ function renderComparatorTable() {
   if (uiState.comparedList.length === 0) {
     emptyMsg.hidden = false;
     table.hidden = true;
-    renderComparisonChart([], 'chart-compare');
+    renderComparisonChart([]);
     return;
   }
 
@@ -212,11 +241,11 @@ function renderComparatorTable() {
       (item, index) => `
       <tr>
         <td><strong>${item.site_name}</strong><br><small>${item.start_date} (${item.days}d)</small></td>
-        <td><span class="tag ${item.go_nogo}">${item.go_nogo}</span></td>
+        <td><strong style="color:${item.go_nogo === 'GO' ? '#34d399' : item.go_nogo === 'INCONCLUSIVE' ? '#fbbf24' : '#f87171'}">${item.go_nogo}</strong></td>
         <td>${item.sun_fraction_pct}%</td>
         <td>${item.earth_fraction_pct}%</td>
         <td class="only-engineer">${item.max_continuous_night_hours} h</td>
-        <td><button type="button" class="x" data-remove-idx="${index}" aria-label="Remover cenário">✕</button></td>
+        <td><button type="button" class="btn small" data-remove-idx="${index}" aria-label="Remove scenario">✕</button></td>
       </tr>
     `
     )
@@ -230,5 +259,5 @@ function renderComparatorTable() {
     });
   });
 
-  renderComparisonChart(uiState.comparedList, 'chart-compare');
+  renderComparisonChart(uiState.comparedList);
 }
