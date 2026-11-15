@@ -20,7 +20,7 @@
 
 | **1. Mission Viability Dashboard & 3D Local Surface** | **2. 3D Lunar Globe (LRO/LOLA Polar Hillshade)** |
 | :---: | :---: |
-| ![3D Local Surface & KPI Dashboard](./docs/screenshots/dashboard_surface.jpg) | ![3D Lunar Globe View](./docs/screenshots/globe_lola.jpg) |
+| ![3D Local Surface & KPI Dashboard](./lunnar-site-planner/docs/screenshots/dashboard_surface.jpg) | ![3D Lunar Globe View](./docs/screenshots/globe_lola.jpg) |
 | *Real* $128 \times 128$ *LOLA DEM (*$36 \times 36\text{ km}$*) with real-time solar shadows, DTE telemetry beam, and GO/NO-GO cards.* | *Selenographic inspection with cached* $512 \times 512$ *LOLA polar hillshade cap and real-time Sun/Earth vectors.* |
 
 | **3. Trans-Lunar Injection (TLI) Transfer View** | **4. Synchronized Elevation Timeline &** $360^\circ$ **Skyplot** |
