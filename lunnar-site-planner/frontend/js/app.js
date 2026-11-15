@@ -13,6 +13,16 @@ import { getLolaPolarMapUrl } from './api.js';
 const html = htm.bind(React.createElement);
 let reactRoot = null;
 
+// Cache de texturas procedurais de alta definição para não recalcular entre trocas de aba
+const TEXTURE_CACHE = {
+  earthMap: null,
+  earthRough: null,
+  earthClouds: null,
+  moonMap: null,
+  moonBump: null,
+  sunMap: null,
+};
+
 function azElToVector3(azDeg, elDeg, radius) {
   const az = THREE.MathUtils.degToRad(azDeg || 0);
   const el = THREE.MathUtils.degToRad(elDeg || 0);
@@ -101,9 +111,411 @@ function createGlowTexture(rgbaCenter = 'rgba(255, 252, 235, 1)', rgbaMid = 'rgb
   return new THREE.CanvasTexture(canvas);
 }
 
+// ============================================================================
+// GERADORES PROCEDURAIS DE PLANETAS E ASTROS (TERRA, LUA, SOL E ESPAÇONAVE)
+// ============================================================================
+
+function fbmNoise(x, y, z) {
+  return (
+    0.52 * Math.sin(x * 2.1 + z * 1.7) * Math.cos(y * 2.3 - x * 1.4) +
+    0.26 * Math.sin(x * 4.7 - y * 3.9 + z * 3.1) +
+    0.14 * Math.cos(y * 8.3 + z * 7.2 - x * 6.5) +
+    0.08 * Math.sin(x * 15.1 + y * 13.7 + z * 11.3)
+  );
+}
+
+function getEarthTextures() {
+  if (TEXTURE_CACHE.earthMap) {
+    return {
+      map: TEXTURE_CACHE.earthMap,
+      roughnessMap: TEXTURE_CACHE.earthRough,
+      cloudsMap: TEXTURE_CACHE.earthClouds,
+    };
+  }
+
+  const w = 512;
+  const h = 256;
+  const canvasMap = document.createElement('canvas');
+  canvasMap.width = w;
+  canvasMap.height = h;
+  const ctxMap = canvasMap.getContext('2d');
+  const imgMap = ctxMap.createImageData(w, h);
+
+  const canvasRough = document.createElement('canvas');
+  canvasRough.width = w;
+  canvasRough.height = h;
+  const ctxRough = canvasRough.getContext('2d');
+  const imgRough = ctxRough.createImageData(w, h);
+
+  const canvasClouds = document.createElement('canvas');
+  canvasClouds.width = w;
+  canvasClouds.height = h;
+  const ctxClouds = canvasClouds.getContext('2d');
+  const imgClouds = ctxClouds.createImageData(w, h);
+
+  for (let py = 0; py < h; py++) {
+    const v = py / h;
+    const lat = (0.5 - v) * Math.PI;
+    const cosLat = Math.cos(lat);
+    const sinLat = Math.sin(lat);
+    const absLat = Math.abs(lat);
+
+    for (let px = 0; px < w; px++) {
+      const u = px / w;
+      const lon = (u - 0.5) * Math.PI * 2;
+      const nx = cosLat * Math.cos(lon);
+      const ny = sinLat;
+      const nz = cosLat * Math.sin(lon);
+
+      const n = fbmNoise(nx * 1.5 + 0.4, ny * 1.5 - 0.2, nz * 1.5 + 0.7);
+      const idx = (py * w + px) * 4;
+
+      // Calotas polares
+      const iceThreshold = 1.18 - 0.12 * n;
+      if (absLat > iceThreshold) {
+        imgMap.data[idx] = 240;
+        imgMap.data[idx + 1] = 246;
+        imgMap.data[idx + 2] = 255;
+        imgMap.data[idx + 3] = 255;
+        imgRough.data[idx] = imgRough.data[idx + 1] = imgRough.data[idx + 2] = 210;
+        imgRough.data[idx + 3] = 255;
+      } else if (n > 0.06) {
+        // Continentes (florestas tropicais/temperadas, savanas e cadeias montanhosas)
+        const elev = Math.min(1, (n - 0.06) / 0.65);
+        const aridity = Math.max(0, 1 - Math.abs(absLat - 0.42) * 3.2);
+        const r = Math.round(34 + elev * 95 + aridity * 65);
+        const g = Math.round(98 + elev * 45 - aridity * 15);
+        const b = Math.round(42 + elev * 30 - aridity * 18);
+        imgMap.data[idx] = Math.min(255, r);
+        imgMap.data[idx + 1] = Math.min(255, g);
+        imgMap.data[idx + 2] = Math.min(255, b);
+        imgMap.data[idx + 3] = 255;
+        // Continentes foscos (alta rugosidade = 230)
+        imgRough.data[idx] = imgRough.data[idx + 1] = imgRough.data[idx + 2] = 230;
+        imgRough.data[idx + 3] = 255;
+      } else {
+        // Oceanos (águas rasas costeiras turquesa -> oceano profundo azul-marinho)
+        const depth = Math.min(1, Math.max(0, (0.06 - n) / 0.65));
+        imgMap.data[idx] = Math.round(12 + (1 - depth) * 28);
+        imgMap.data[idx + 1] = Math.round(52 + (1 - depth) * 68);
+        imgMap.data[idx + 2] = Math.round(138 + (1 - depth) * 72);
+        imgMap.data[idx + 3] = 255;
+        // Oceanos com reflexo especular solar (baixa rugosidade = 55)
+        imgRough.data[idx] = imgRough.data[idx + 1] = imgRough.data[idx + 2] = 55;
+        imgRough.data[idx + 3] = 255;
+      }
+
+      // Camada de nuvens atmosféricas
+      const cNoise = fbmNoise(nx * 2.8 - 1.1, ny * 3.4 + 0.5, nz * 2.8 + 1.9);
+      const cloudAlpha = Math.max(0, Math.min(255, Math.round((cNoise - 0.08) * 380)));
+      imgClouds.data[idx] = 255;
+      imgClouds.data[idx + 1] = 255;
+      imgClouds.data[idx + 2] = 255;
+      imgClouds.data[idx + 3] = cloudAlpha;
+    }
+  }
+
+  ctxMap.putImageData(imgMap, 0, 0);
+  ctxRough.putImageData(imgRough, 0, 0);
+  ctxClouds.putImageData(imgClouds, 0, 0);
+
+  TEXTURE_CACHE.earthMap = new THREE.CanvasTexture(canvasMap);
+  TEXTURE_CACHE.earthRough = new THREE.CanvasTexture(canvasRough);
+  TEXTURE_CACHE.earthClouds = new THREE.CanvasTexture(canvasClouds);
+
+  return {
+    map: TEXTURE_CACHE.earthMap,
+    roughnessMap: TEXTURE_CACHE.earthRough,
+    cloudsMap: TEXTURE_CACHE.earthClouds,
+  };
+}
+
+function getMoonTextures() {
+  if (TEXTURE_CACHE.moonMap) {
+    return { map: TEXTURE_CACHE.moonMap, bumpMap: TEXTURE_CACHE.moonBump };
+  }
+
+  const w = 512;
+  const h = 256;
+  const canvasMap = document.createElement('canvas');
+  canvasMap.width = w;
+  canvasMap.height = h;
+  const ctxMap = canvasMap.getContext('2d');
+  const imgMap = ctxMap.createImageData(w, h);
+
+  const canvasBump = document.createElement('canvas');
+  canvasBump.width = w;
+  canvasBump.height = h;
+  const ctxBump = canvasBump.getContext('2d');
+  const imgBump = ctxBump.createImageData(w, h);
+
+  // Crateras determinísticas para relevo 3D
+  const craters = [];
+  for (let i = 0; i < 140; i++) {
+    const clat = ((i * 53) % 160 - 80) * (Math.PI / 180);
+    const clon = ((i * 97) % 360 - 180) * (Math.PI / 180);
+    craters.push({
+      x: Math.cos(clat) * Math.cos(clon),
+      y: Math.sin(clat),
+      z: Math.cos(clat) * Math.sin(clon),
+      rad: 0.035 + ((i * 19) % 10) * 0.012,
+    });
+  }
+
+  for (let py = 0; py < h; py++) {
+    const lat = (0.5 - py / h) * Math.PI;
+    const cosLat = Math.cos(lat);
+    const sinLat = Math.sin(lat);
+
+    for (let px = 0; px < w; px++) {
+      const lon = (px / w - 0.5) * Math.PI * 2;
+      const nx = cosLat * Math.cos(lon);
+      const ny = sinLat;
+      const nz = cosLat * Math.sin(lon);
+
+      // Maria basálticos escuros vs. Highlands claras
+      const mariaNoise = fbmNoise(nx * 1.4, ny * 1.4, nz * 1.4);
+      const detailNoise = fbmNoise(nx * 6.5, ny * 6.5, nz * 6.5);
+
+      let craterDelta = 0;
+      for (let c = 0; c < craters.length; c++) {
+        const cr = craters[c];
+        const dx = nx - cr.x;
+        const dy = ny - cr.y;
+        const dz = nz - cr.z;
+        const d2 = dx * dx + dy * dy + dz * dz;
+        const r2 = cr.rad * cr.rad;
+        if (d2 < r2 * 1.6) {
+          const ratio = Math.sqrt(d2) / cr.rad;
+          if (ratio < 0.82) {
+            craterDelta -= (1 - (ratio / 0.82) ** 2) * 32;
+          } else if (ratio < 1.18) {
+            craterDelta += Math.sin(((ratio - 0.82) / 0.36) * Math.PI) * 24;
+          }
+        }
+      }
+
+      const isMare = mariaNoise < -0.08 && ny > -0.65;
+      const baseAlbedo = isMare ? 112 + mariaNoise * 45 : 168 + mariaNoise * 38;
+      const val = Math.max(55, Math.min(238, Math.round(baseAlbedo + detailNoise * 22 + craterDelta * 0.6)));
+      const bumpVal = Math.max(0, Math.min(255, Math.round(128 + detailNoise * 45 + craterDelta * 1.8)));
+
+      const idx = (py * w + px) * 4;
+      imgMap.data[idx] = val;
+      imgMap.data[idx + 1] = val;
+      imgMap.data[idx + 2] = Math.min(255, val + 4);
+      imgMap.data[idx + 3] = 255;
+
+      imgBump.data[idx] = imgBump.data[idx + 1] = imgBump.data[idx + 2] = bumpVal;
+      imgBump.data[idx + 3] = 255;
+    }
+  }
+
+  ctxMap.putImageData(imgMap, 0, 0);
+  ctxBump.putImageData(imgBump, 0, 0);
+
+  TEXTURE_CACHE.moonMap = new THREE.CanvasTexture(canvasMap);
+  TEXTURE_CACHE.moonBump = new THREE.CanvasTexture(canvasBump);
+  return { map: TEXTURE_CACHE.moonMap, bumpMap: TEXTURE_CACHE.moonBump };
+}
+
+function getSunPhotosphereTexture() {
+  if (TEXTURE_CACHE.sunMap) return TEXTURE_CACHE.sunMap;
+
+  const w = 256;
+  const h = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(w, h);
+
+  for (let py = 0; py < h; py++) {
+    const lat = (0.5 - py / h) * Math.PI;
+    const cosLat = Math.cos(lat);
+    const sinLat = Math.sin(lat);
+    for (let px = 0; px < w; px++) {
+      const lon = (px / w - 0.5) * Math.PI * 2;
+      const nx = cosLat * Math.cos(lon);
+      const ny = sinLat;
+      const nz = cosLat * Math.sin(lon);
+      const gran = fbmNoise(nx * 5.5, ny * 5.5, nz * 5.5);
+      const idx = (py * w + px) * 4;
+      img.data[idx] = 255;
+      img.data[idx + 1] = Math.max(195, Math.min(255, Math.round(232 + gran * 35)));
+      img.data[idx + 2] = Math.max(110, Math.min(240, Math.round(165 + gran * 65)));
+      img.data[idx + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  TEXTURE_CACHE.sunMap = new THREE.CanvasTexture(canvas);
+  return TEXTURE_CACHE.sunMap;
+}
+
+// Constrói o Globo Terrestre 3D detalhado (Continentes + Oceanos Especulares + Nuvens + Atmosfera Fresnel)
+function buildDetailedEarthGroup(radius = 1.1, labelText = '🌍 EARTH', labelOffsetY = 1.55) {
+  const group = new THREE.Group();
+  const { map, roughnessMap, cloudsMap } = getEarthTextures();
+
+  const earthSphere = new THREE.Mesh(
+    new THREE.SphereGeometry(radius, 48, 48),
+    new THREE.MeshStandardMaterial({
+      map,
+      roughnessMap,
+      roughness: 0.72,
+      metalness: 0.08,
+      emissive: 0x0b1e47,
+      emissiveIntensity: 0.28,
+    })
+  );
+  // Inclinação axial terrestre real (23.44°)
+  earthSphere.rotation.z = THREE.MathUtils.degToRad(23.44);
+  group.add(earthSphere);
+
+  // Esfera de nuvens dinâmicas
+  const cloudsMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(radius * 1.018, 40, 40),
+    new THREE.MeshStandardMaterial({
+      map: cloudsMap,
+      transparent: true,
+      opacity: 0.75,
+      depthWrite: false,
+      roughness: 0.9,
+    })
+  );
+  group.add(cloudsMesh);
+
+  // Halo atmosférico azul celeste
+  const atmoGlow = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: createGlowTexture('rgba(96, 165, 250, 0.75)', 'rgba(37, 99, 235, 0.32)'),
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  atmoGlow.scale.set(radius * 3.4, radius * 3.4, 1);
+  group.add(atmoGlow);
+
+  if (labelText) {
+    const label = createLabelSprite(labelText, '#38bdf8', 'rgba(6, 10, 24, 0.92)', 0.036);
+    label.position.set(0, labelOffsetY, 0);
+    group.add(label);
+  }
+
+  return { group, earthSphere, cloudsMesh };
+}
+
+// Constrói o Sol com Fotosfera de Plasma + Dupla Coroa Solar
+function buildDetailedSunGroup(radius = 0.95, haloScale = 8.0, labelOffsetY = 1.9) {
+  const sunGroup = new THREE.Group();
+  const sunTex = getSunPhotosphereTexture();
+
+  const sunSphere = new THREE.Mesh(
+    new THREE.SphereGeometry(radius, 32, 32),
+    new THREE.MeshBasicMaterial({ map: sunTex, color: 0xfffbeb })
+  );
+
+  const innerCorona = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: createGlowTexture('rgba(255, 253, 240, 1)', 'rgba(251, 191, 36, 0.88)'),
+      color: 0xffd166,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  innerCorona.scale.set(haloScale * 0.65, haloScale * 0.65, 1);
+
+  const outerCorona = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: createGlowTexture('rgba(251, 191, 36, 0.55)', 'rgba(245, 158, 11, 0.18)'),
+      color: 0xf59e0b,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  outerCorona.scale.set(haloScale * 1.15, haloScale * 1.15, 1);
+
+  const sunLabel = createLabelSprite('☀️ SUN', '#fbbf24', 'rgba(6, 10, 24, 0.92)', 0.036);
+  sunLabel.position.set(0, labelOffsetY, 0);
+
+  sunGroup.add(sunSphere, innerCorona, outerCorona, sunLabel);
+  return { sunGroup, sunSphere };
+}
+
+// Constrói Espaçonave Orbital TLI Detalhada (Orion / CLPS Transfer Stage com Painéis Solares e Pluma de Motor)
+function buildSpacecraftMesh() {
+  const root = new THREE.Group();
+  // Geometria interna alinhada para que +Z (direção do lookAt) seja o nariz da espaçonave
+  const model = new THREE.Group();
+  model.rotation.x = Math.PI / 2;
+  root.add(model);
+
+  // Cápsula / Coifa frontal cônica
+  const nose = new THREE.Mesh(
+    new THREE.ConeGeometry(0.11, 0.22, 16),
+    new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.3, metalness: 0.35 })
+  );
+  nose.position.y = 0.22;
+  model.add(nose);
+
+  // Módulo de serviço cilíndrico revestido em Kapton/Alumínio
+  const bus = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.11, 0.12, 0.26, 16),
+    new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.35, metalness: 0.6 })
+  );
+  bus.position.y = -0.02;
+  model.add(bus);
+
+  // Campânula do motor de injeção translunar (TLI Engine Nozzle)
+  const nozzle = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.04, 0.08, 0.12, 14),
+    new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.4, metalness: 0.8 })
+  );
+  nozzle.position.y = -0.2;
+  model.add(nozzle);
+
+  // Pluma de plasma do motor (brilha intensamente no início TLI e na captura LOI)
+  const plumeGlow = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: createGlowTexture('rgba(125, 211, 252, 1)', 'rgba(56, 189, 248, 0.6)'),
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  plumeGlow.scale.set(0.55, 0.55, 1);
+  plumeGlow.position.y = -0.32;
+  model.add(plumeGlow);
+
+  // 4 Painéis Solares em Cruz (estilo Orion ESM)
+  const panelMat = new THREE.MeshStandardMaterial({
+    color: 0x1d4ed8,
+    emissive: 0x1e40af,
+    emissiveIntensity: 0.55,
+    metalness: 0.5,
+    roughness: 0.2,
+    side: THREE.DoubleSide,
+  });
+  for (let i = 0; i < 4; i++) {
+    const wing = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.11), panelMat);
+    const angle = (i * Math.PI) / 2 + Math.PI / 4;
+    wing.position.set(Math.cos(angle) * 0.3, -0.02, Math.sin(angle) * 0.3);
+    wing.rotation.y = -angle;
+    model.add(wing);
+  }
+
+  const label = createLabelSprite('🚀 SPACECRAFT', '#fbbf24', 'rgba(6, 10, 24, 0.92)', 0.032);
+  label.position.set(0, 0.65, 0);
+  root.add(label);
+
+  return { root, plumeGlow };
+}
+
 /**
  * Cria rótulo 3D compacto, nítido e proporcional (screenHeight = 0.036 por padrão)
- * para ser lido de qualquer distância sem tampar a cena.
  */
 function createLabelSprite(text, colorHex = '#ffffff', bgRgba = 'rgba(6, 10, 24, 0.9)', screenHeight = 0.036) {
   const canvas = document.createElement('canvas');
@@ -172,7 +584,6 @@ function createStarfield(count = 3200, minRadius = 120, maxRadius = 240) {
   return new THREE.Points(geo, mat);
 }
 
-// Constrói o anel de horizonte distante de 40 km do LOLA ao redor da malha local
 function buildHorizonRidgeMesh(horizonProfile = [], radius = 24, baseY = -1.5) {
   const group = new THREE.Group();
   if (!Array.isArray(horizonProfile) || horizonProfile.length < 3) {
@@ -367,7 +778,6 @@ function buildLunarLanderMesh() {
   return { group, body, panelMat, padRing };
 }
 
-// Constrói o grupo visual de bloqueio de comunicação ("⛰️ Terrain blocking communication")
 function buildCommBlockIndicator(sphereRadius = 0.18, glowScale = 1.6, badgeOffsetY = 0.85) {
   const commBlockGroup = new THREE.Group();
   commBlockGroup.visible = false;
@@ -410,6 +820,8 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
   const sceneObjectsRef = useRef({
     viewMode: 'superficie',
     globeMesh: null,
+    earthCloudsMesh: null,
+    earthSpinSphere: null,
     terrainGeo: null,
     terrainMesh: null,
     horizonBeltGroup: null,
@@ -434,7 +846,9 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
     landerPadRing: null,
     landerLight: null,
     probeMesh: null,
+    probePlume: null,
     tliPoints: [],
+    tliPulses: [],
     landerTopPos: new THREE.Vector3(0, 0.72, 0),
     earthTargetPos: new THREE.Vector3(0, 8, -28),
     earthCurrentPos: new THREE.Vector3(0, 8, -28),
@@ -583,6 +997,8 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
     const refs = {
       viewMode,
       globeMesh: null,
+      earthCloudsMesh: null,
+      earthSpinSphere: null,
       terrainGeo: null,
       terrainMesh: null,
       horizonBeltGroup: null,
@@ -607,7 +1023,9 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       landerPadRing: null,
       landerLight: null,
       probeMesh: null,
+      probePlume: null,
       tliPoints: [],
+      tliPulses: [],
       landerTopPos: new THREE.Vector3(0, 0.72, 0),
       earthTargetPos: new THREE.Vector3(0, 8, -28),
       earthCurrentPos: new THREE.Vector3(0, 8, -28),
@@ -629,66 +1047,134 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
     const initEarthAz = Number(initFrame.earth_azimuth_deg || 0);
 
     if (viewMode === 'viagem') {
-      camera.position.set(0, 6.5, 11.2);
-      controls.target.set(0, 0, 1);
+      // MODO 1: TRANSFERÊNCIA TRANSLUNAR (TLI) COM PLANETAS DETALHADOS, ANÉIS LEO/LLO E ESPAÇONAVE 3D
+      camera.position.set(-0.2, 6.2, 10.6);
+      controls.target.set(-0.2, 0.1, 0.8);
 
       const ePos = viagemData?.earth_pos || { x: -3.2, y: 0, z: 0 };
       const mPos = viagemData?.moon_pos || { x: 2.6, y: 0, z: 2.3 };
+      const earthCenter = new THREE.Vector3(ePos.x, ePos.y, ePos.z);
+      const moonCenter = new THREE.Vector3(mPos.x, mPos.y, mPos.z);
 
-      const earthGroup = new THREE.Group();
-      earthGroup.position.set(ePos.x, ePos.y, ePos.z);
-      const earthMesh = new THREE.Mesh(
-        new THREE.SphereGeometry(1.1, 48, 48),
-        new THREE.MeshStandardMaterial({ color: 0x1d4ed8, roughness: 0.4, metalness: 0.1 })
+      // Terra 3D com Continentes, Oceanos Especulares e Camada de Nuvens
+      const detailedEarth = buildDetailedEarthGroup(1.12, '🌍 EARTH', 1.65);
+      detailedEarth.group.position.copy(earthCenter);
+      scene.add(detailedEarth.group);
+      refs.earthCloudsMesh = detailedEarth.cloudsMesh;
+      refs.earthSpinSphere = detailedEarth.earthSphere;
+
+      // Anel de Órbita de Estacionamento Terrestre (LEO Parking Orbit)
+      const leoRing = new THREE.Mesh(
+        new THREE.RingGeometry(1.36, 1.4, 64),
+        new THREE.MeshBasicMaterial({ color: 0x38bdf8, side: THREE.DoubleSide, transparent: true, opacity: 0.55 })
       );
-      const atmoMesh = new THREE.Mesh(
-        new THREE.SphereGeometry(1.18, 48, 48),
-        new THREE.MeshBasicMaterial({
-          color: 0x60a5fa,
-          transparent: true,
-          opacity: 0.25,
-          blending: THREE.AdditiveBlending,
-          side: THREE.BackSide,
+      leoRing.rotation.x = Math.PI / 2 - 0.18;
+      leoRing.position.copy(earthCenter);
+      scene.add(leoRing);
+
+      // Lua 3D com Textura de Maria/Crateras + Bump Map
+      const moonTextures = getMoonTextures();
+      const moonGroup = new THREE.Group();
+      moonGroup.position.copy(moonCenter);
+      const moon = new THREE.Mesh(
+        new THREE.SphereGeometry(0.48, 48, 48),
+        new THREE.MeshStandardMaterial({
+          map: moonTextures.map,
+          bumpMap: moonTextures.bumpMap,
+          bumpScale: 0.025,
+          roughness: 0.9,
+          metalness: 0.03,
         })
       );
-      const earthLabel = createLabelSprite('🌍 EARTH', '#38bdf8', 'rgba(6, 10, 24, 0.9)', 0.036);
-      earthLabel.position.set(0, 1.55, 0);
-      earthGroup.add(earthMesh, atmoMesh, earthLabel);
-
-      const moonGroup = new THREE.Group();
-      moonGroup.position.set(mPos.x, mPos.y, mPos.z);
-      const moon = new THREE.Mesh(
-        new THREE.SphereGeometry(0.46, 32, 32),
-        new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.92 })
-      );
       const moonLabel = createLabelSprite('☾ MOON', '#cbd5e1', 'rgba(6, 10, 24, 0.9)', 0.034);
-      moonLabel.position.set(0, 0.85, 0);
+      moonLabel.position.set(0, 0.9, 0);
       moonGroup.add(moon, moonLabel);
+      scene.add(moonGroup);
 
-      scene.add(earthGroup, moonGroup);
+      // Anel de Captura Polar Lunar (LLO Polar Capture Orbit -> South Pole)
+      const lloRing = new THREE.Mesh(
+        new THREE.RingGeometry(0.68, 0.71, 64),
+        new THREE.MeshBasicMaterial({ color: 0x3ddc97, side: THREE.DoubleSide, transparent: true, opacity: 0.65 })
+      );
+      // Órbita polar (90° de inclinação passando sobre o Polo Sul lunar)
+      lloRing.rotation.y = Math.PI / 4;
+      lloRing.position.copy(moonCenter);
+      scene.add(lloRing);
 
+      // Pino luminoso no Polo Sul da Lua indicando o alvo final de pouso
+      const southPoleTarget = new THREE.Mesh(
+        new THREE.SphereGeometry(0.055, 12, 12),
+        new THREE.MeshBasicMaterial({ color: 0x3ddc97 })
+      );
+      southPoleTarget.position.set(moonCenter.x, moonCenter.y - 0.49, moonCenter.z);
+      scene.add(southPoleTarget);
+
+      // Curva de Transferência TLI + Marcos de Queima (TLI Burn & LOI Capture)
       const pts = (viagemData?.tli_trajectory || []).map((p) => new THREE.Vector3(p.x, p.y, p.z));
       refs.tliPoints = pts;
       if (pts.length > 1) {
-        const line = new THREE.Line(
+        const tliLine = new THREE.Line(
           new THREE.BufferGeometry().setFromPoints(pts),
-          new THREE.LineBasicMaterial({ color: 0x38bdf8 })
+          new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.85 })
         );
-        const probe = new THREE.Mesh(
-          new THREE.ConeGeometry(0.14, 0.4, 16),
-          new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0xd97706, emissiveIntensity: 0.5 })
+        scene.add(tliLine);
+
+        // Marcador TLI Burn (Injeção Translunar na saída da Terra)
+        const tliBurnMarker = new THREE.Group();
+        tliBurnMarker.position.copy(pts[1] || pts[0]);
+        const burnDot = new THREE.Mesh(
+          new THREE.SphereGeometry(0.075, 14, 14),
+          new THREE.MeshBasicMaterial({ color: 0xf59e0b })
         );
-        probe.position.copy(pts[0]);
-        scene.add(line, probe);
-        refs.probeMesh = probe;
+        const burnLabel = createLabelSprite('🔥 TLI BURN', '#f59e0b', 'rgba(28, 14, 4, 0.9)', 0.028);
+        burnLabel.position.set(0, -0.55, 0);
+        tliBurnMarker.add(burnDot, burnLabel);
+        scene.add(tliBurnMarker);
+
+        // Marcador LOI Capture (Inserção em Órbita Lunar na chegada à Lua)
+        const loiMarker = new THREE.Group();
+        loiMarker.position.copy(pts[pts.length - 1]);
+        const loiDot = new THREE.Mesh(
+          new THREE.SphereGeometry(0.07, 14, 14),
+          new THREE.MeshBasicMaterial({ color: 0x3ddc97 })
+        );
+        const loiLabel = createLabelSprite('🎯 LOI CAPTURE (89°S)', '#3ddc97', 'rgba(6, 24, 18, 0.9)', 0.028);
+        loiLabel.position.set(0, -0.55, 0);
+        loiMarker.add(loiDot, loiLabel);
+        scene.add(loiMarker);
+
+        // Pulsos luminosos percorrendo a trajetória TLI para indicar sentido do fluxo orbital
+        const tliPulses = [];
+        const pGeo = new THREE.SphereGeometry(0.045, 10, 10);
+        for (let i = 0; i < 10; i++) {
+          const pMesh = new THREE.Mesh(
+            pGeo,
+            new THREE.MeshBasicMaterial({ color: 0x7dd3fc })
+          );
+          scene.add(pMesh);
+          tliPulses.push(pMesh);
+        }
+        refs.tliPulses = tliPulses;
+
+        // Espaçonave 3D orientada ao longo do vetor velocidade tangente da trajetória
+        const scObj = buildSpacecraftMesh();
+        scObj.root.position.copy(pts[0]);
+        if (pts[1]) scObj.root.lookAt(pts[1]);
+        scene.add(scObj.root);
+        refs.probeMesh = scObj.root;
+        refs.probePlume = scObj.plumeGlow;
       }
     } else if (viewMode === 'globo') {
+      // MODO 2: GLOBO LUNAR 3D COM RELEVO GLOBAL + CALOTA POLAR LOLA REAL + TERRA/SOL DETALHADOS
       camera.position.set(0, -4.6, 5.8);
       controls.target.set(0, -0.5, 0);
 
+      const moonTextures = getMoonTextures();
       const globeMat = new THREE.MeshStandardMaterial({
-        color: 0xdbeafe,
-        roughness: 0.92,
+        map: moonTextures.map,
+        bumpMap: moonTextures.bumpMap,
+        bumpScale: 0.035,
+        roughness: 0.9,
         metalness: 0.02,
       });
 
@@ -706,7 +1192,9 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
           const capGeo = new THREE.CircleGeometry(capRadius, 64);
           const capMat = new THREE.MeshStandardMaterial({
             map: lolaTex,
-            roughness: 0.9,
+            bumpMap: lolaTex,
+            bumpScale: 0.04,
+            roughness: 0.88,
             metalness: 0.03,
             side: THREE.DoubleSide,
           });
@@ -753,25 +1241,8 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       refs.commBeamEndPos.copy(earthInitPos);
       sunLight.position.copy(refs.sunLightTargetPos);
 
-      const sunGroup = new THREE.Group();
+      const { sunGroup } = buildDetailedSunGroup(0.44, 3.2, 0.9);
       sunGroup.position.copy(sunInitPos);
-      const sunSphere = new THREE.Mesh(
-        new THREE.SphereGeometry(0.42, 24, 24),
-        new THREE.MeshBasicMaterial({ color: 0xfffbeb })
-      );
-      const sunSprite = new THREE.Sprite(
-        new THREE.SpriteMaterial({
-          map: createGlowTexture('rgba(255, 252, 235, 1)', 'rgba(251, 191, 36, 0.85)'),
-          color: 0xffd166,
-          transparent: true,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-        })
-      );
-      sunSprite.scale.set(3.2, 3.2, 1);
-      const sunLabel = createLabelSprite('☀️ SUN', '#fbbf24', 'rgba(6, 10, 24, 0.9)', 0.036);
-      sunLabel.position.set(0, 0.9, 0);
-      sunGroup.add(sunSphere, sunSprite, sunLabel);
       scene.add(sunGroup);
       refs.sunMesh = sunGroup;
 
@@ -791,22 +1262,12 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       refs.sunRayLine = sunRayLine;
       refs.sunRayMat = sunRayMat;
 
-      const earthGroup = new THREE.Group();
-      earthGroup.position.copy(earthInitPos);
-      const earthSphere = new THREE.Mesh(
-        new THREE.SphereGeometry(0.38, 24, 24),
-        new THREE.MeshStandardMaterial({
-          color: 0x2563eb,
-          emissive: 0x1d4ed8,
-          emissiveIntensity: 0.65,
-          roughness: 0.35,
-        })
-      );
-      const earthLabel = createLabelSprite('🌍 EARTH', '#38bdf8', 'rgba(6, 10, 24, 0.9)', 0.036);
-      earthLabel.position.set(0, 0.85, 0);
-      earthGroup.add(earthSphere, earthLabel);
-      scene.add(earthGroup);
-      refs.earthGroup = earthGroup;
+      const detailedEarth = buildDetailedEarthGroup(0.42, '🌍 EARTH', 0.85);
+      detailedEarth.group.position.copy(earthInitPos);
+      scene.add(detailedEarth.group);
+      refs.earthGroup = detailedEarth.group;
+      refs.earthCloudsMesh = detailedEarth.cloudsMesh;
+      refs.earthSpinSphere = detailedEarth.earthSphere;
 
       const commBeamGroup = new THREE.Group();
       const commLineMat = new THREE.LineDashedMaterial({
@@ -837,12 +1298,11 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       refs.commLineMat = commLineMat;
       refs.commLine = commLine;
 
-      // Marcador 3D no Globo indicando onde o terreno/curvatura lunar bloqueia a comunicação com a Terra
       const commBlockGroup = buildCommBlockIndicator(0.095, 0.9, 0.45);
       scene.add(commBlockGroup);
       refs.commBlockGroup = commBlockGroup;
     } else {
-      // MODO 3: RELEVO REAL LOLA + CORDILHEIRA 360° + VETORES ANCORADOS NA SONDA
+      // MODO 3: RELEVO REAL LOLA + CORDILHEIRA 360° + SOL E TERRA DETALHADOS NO CÉU
       const grid = simData?.terrain_grid;
       const gridSize = grid?.size || 128;
       const segments = gridSize - 1;
@@ -928,53 +1388,17 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       refs.earthCurrentPos.copy(earthInitVisual);
       refs.commBeamEndPos.copy(earthInitVisual);
 
-      const sunGroup = new THREE.Group();
+      const { sunGroup } = buildDetailedSunGroup(0.95, 8.0, 1.9);
       sunGroup.position.copy(sunInitVisual);
-      const sunSphere = new THREE.Mesh(
-        new THREE.SphereGeometry(0.95, 32, 32),
-        new THREE.MeshBasicMaterial({ color: 0xfffbeb })
-      );
-      const sunSprite = new THREE.Sprite(
-        new THREE.SpriteMaterial({
-          map: createGlowTexture('rgba(255, 252, 235, 1)', 'rgba(251, 191, 36, 0.85)'),
-          color: 0xffd166,
-          transparent: true,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-        })
-      );
-      sunSprite.scale.set(8.0, 8.0, 1);
-      const sunLabel = createLabelSprite('☀️ SUN', '#fbbf24', 'rgba(6, 10, 24, 0.92)', 0.036);
-      sunLabel.position.set(0, 1.9, 0);
-      sunGroup.add(sunSphere, sunSprite, sunLabel);
       scene.add(sunGroup);
       refs.sunMesh = sunGroup;
 
-      const earthGroup = new THREE.Group();
-      earthGroup.position.copy(earthInitVisual);
-      const earthSphere = new THREE.Mesh(
-        new THREE.SphereGeometry(0.9, 32, 32),
-        new THREE.MeshStandardMaterial({
-          color: 0x2563eb,
-          emissive: 0x1d4ed8,
-          emissiveIntensity: 0.65,
-          roughness: 0.35,
-        })
-      );
-      const earthGlow = new THREE.Sprite(
-        new THREE.SpriteMaterial({
-          map: createGlowTexture('rgba(96, 165, 250, 0.9)', 'rgba(37, 99, 235, 0.45)'),
-          transparent: true,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-        })
-      );
-      earthGlow.scale.set(5.2, 5.2, 1);
-      const earthLabel = createLabelSprite('🌍 EARTH', '#38bdf8', 'rgba(6, 10, 24, 0.92)', 0.036);
-      earthLabel.position.set(0, 1.8, 0);
-      earthGroup.add(earthSphere, earthGlow, earthLabel);
-      scene.add(earthGroup);
-      refs.earthGroup = earthGroup;
+      const detailedEarth = buildDetailedEarthGroup(0.95, '🌍 EARTH', 1.85);
+      detailedEarth.group.position.copy(earthInitVisual);
+      scene.add(detailedEarth.group);
+      refs.earthGroup = detailedEarth.group;
+      refs.earthCloudsMesh = detailedEarth.cloudsMesh;
+      refs.earthSpinSphere = detailedEarth.earthSphere;
 
       const commBeamGroup = new THREE.Group();
       const commLineMat = new THREE.LineDashedMaterial({
@@ -1019,6 +1443,26 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       animId = requestAnimationFrame(renderLoop);
       const elapsed = clock.getElapsedTime();
       const r = sceneObjectsRef.current;
+
+      // Rotação suave das nuvens e da Terra
+      if (r.earthCloudsMesh) {
+        r.earthCloudsMesh.rotation.y = elapsed * 0.08;
+      }
+      if (r.earthSpinSphere) {
+        r.earthSpinSphere.rotation.y = elapsed * 0.04;
+      }
+
+      // Anima os pulsos ao longo da curva TLI no Modo 1
+      if (r.viewMode === 'viagem' && r.tliPulses.length > 0 && r.tliPoints.length > 1) {
+        const maxPts = r.tliPoints.length - 1;
+        for (let i = 0; i < r.tliPulses.length; i++) {
+          const u = ((i / r.tliPulses.length) + elapsed * 0.14) % 1.0;
+          const exactIdx = u * maxPts;
+          const i0 = Math.floor(exactIdx);
+          const i1 = Math.min(maxPts, i0 + 1);
+          r.tliPulses[i].position.lerpVectors(r.tliPoints[i0], r.tliPoints[i1], exactIdx - i0);
+        }
+      }
 
       if (r.sunLight) {
         r.sunLight.intensity += (r.targetSunIntensity - r.sunLight.intensity) * 0.08;
@@ -1071,10 +1515,8 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
               r.commBeamEndPos.copy(originPt).addScaledVector(dirToEarth, hitDist);
             }
           } else if (r.viewMode === 'globo') {
-            // No Modo 2 (3D Globe), calcula o ponto na borda/horizonte do globo onde o relevo lunar bloqueia a visada para a Terra
             const dirToEarth = r.earthCurrentPos.clone().sub(originPt).normalize();
             const upNormal = originPt.clone().normalize();
-            // Tangente ao horizonte local na direção da Terra a ~0.85 radianos do pino
             const tangentDir = dirToEarth
               .clone()
               .sub(upNormal.clone().multiplyScalar(dirToEarth.dot(upNormal)))
@@ -1157,10 +1599,10 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
     refs.earthVisibleNow = earthVisible;
 
     if (viewMode === 'viagem') {
-      const spaceSunPos = azElToVector3(sunAz, Math.max(8, sunElev), 38);
+      const spaceSunPos = azElToVector3(sunAz, Math.max(12, sunElev), 38);
       refs.sunLightTargetPos.copy(spaceSunPos);
-      refs.targetSunIntensity = 3.4;
-      refs.targetHemiIntensity = 0.22;
+      refs.targetSunIntensity = 3.6;
+      refs.targetHemiIntensity = 0.28;
     } else if (viewMode === 'globo') {
       const siteLat = simData?.lat ?? -89.9;
       const siteLon = simData?.lon ?? 0.0;
@@ -1230,13 +1672,30 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
       }
     }
 
+    // Posiciona e orienta a espaçonave 3D tangente à curva de transferência TLI
     if (refs.probeMesh && refs.tliPoints.length > 1) {
       const maxT = Math.max(1, timeline.length - 1);
-      const probeIdx = Math.min(
-        refs.tliPoints.length - 1,
-        Math.floor((stepIdx / maxT) * refs.tliPoints.length)
-      );
-      refs.probeMesh.position.copy(refs.tliPoints[probeIdx]);
+      const progress = stepIdx / maxT;
+      const exactIdx = progress * (refs.tliPoints.length - 1);
+      const i0 = Math.floor(exactIdx);
+      const i1 = Math.min(refs.tliPoints.length - 1, i0 + 1);
+      const frac = exactIdx - i0;
+
+      refs.probeMesh.position.lerpVectors(refs.tliPoints[i0], refs.tliPoints[i1], frac);
+
+      // Orienta o nariz da espaçonave na direção do vetor velocidade (tangente)
+      const lookIdx = Math.min(refs.tliPoints.length - 1, i0 + 1);
+      const prevIdx = Math.max(0, lookIdx - 1);
+      const tangent = refs.tliPoints[lookIdx].clone().sub(refs.tliPoints[prevIdx]);
+      if (tangent.lengthSq() > 1e-6) {
+        refs.probeMesh.lookAt(refs.probeMesh.position.clone().add(tangent));
+      }
+
+      // Acende a pluma do motor durante o TLI Burn (início) e LOI Capture (chegada)
+      if (refs.probePlume) {
+        const isBurning = progress < 0.12 || progress > 0.88;
+        refs.probePlume.scale.setScalar(isBurning ? 0.62 : 0.22);
+      }
     }
   }, [stepIdx, activeFrame, viewMode, timeline.length, simData, vertExag]);
 
@@ -1254,6 +1713,15 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
     : earthElevNow > 0;
   const sunElevNow = Number(activeFrame.sun_elevation_deg || 0);
   const slopeNow = typeof simData?.slope_deg === 'number' ? `${simData.slope_deg.toFixed(1)}°` : 'N/A';
+
+  const maxSteps = Math.max(1, timeline.length - 1);
+  const tliProgressPct = Math.round((stepIdx / maxSteps) * 100);
+  const tliStage =
+    tliProgressPct < 12
+      ? 'TLI BURN (LEO DEPARTURE)'
+      : tliProgressPct < 88
+      ? `TRANSLUNAR COAST (${tliProgressPct}%)`
+      : 'LOI POLAR CAPTURE';
 
   return html`
     <div className="space-y-3">
@@ -1337,29 +1805,46 @@ function LunarScene3D({ simData, viagemData, fasesData, onStepChange }) {
         <div ref=${canvasWrapRef} className="w-full h-full"></div>
 
         <div className="hud-3d">
-          <div>
-            <span>SUN</span>
-            <strong>${sunElevNow.toFixed(2)}°</strong>
-            <em className=${sunVis ? 'ok' : 'bad'}>
-              ${sunVis ? 'GENERATING' : 'SHADOW'}
-            </em>
-          </div>
-          <div>
-            <span>EARTH</span>
-            <strong>${earthElevNow.toFixed(2)}°</strong>
-            <em className=${earthVis ? 'ok' : 'bad'}>${earthVis ? 'ACTIVE LINK' : 'OCCULTED'}</em>
-          </div>
-          ${simData?.terrain_grid &&
-          html`
-            <div>
-              <span>LOLA ELEV</span>
-              <strong>${simData.terrain_grid.min_elevation_m}m to ${simData.terrain_grid.max_elevation_m}m</strong>
-            </div>
-          `}
-          <div>
-            <span>SLOPE</span>
-            <strong>${slopeNow}</strong>
-          </div>
+          ${viewMode === 'viagem'
+            ? html`
+                <div>
+                  <span>STAGE</span>
+                  <em className="ok">${tliStage}</em>
+                </div>
+                <div>
+                  <span>EARTH–MOON DIST</span>
+                  <strong>${viagemData?.distancia_terra_lua_km ? `${viagemData.distancia_terra_lua_km.toLocaleString('en-US')} km` : '384,400 km'}</strong>
+                </div>
+                <div>
+                  <span>TARGET</span>
+                  <strong>${simData?.site_name || 'Lunar South Pole'}</strong>
+                </div>
+              `
+            : html`
+                <div>
+                  <span>SUN</span>
+                  <strong>${sunElevNow.toFixed(2)}°</strong>
+                  <em className=${sunVis ? 'ok' : 'bad'}>
+                    ${sunVis ? 'GENERATING' : 'SHADOW'}
+                  </em>
+                </div>
+                <div>
+                  <span>EARTH</span>
+                  <strong>${earthElevNow.toFixed(2)}°</strong>
+                  <em className=${earthVis ? 'ok' : 'bad'}>${earthVis ? 'ACTIVE LINK' : 'OCCULTED'}</em>
+                </div>
+                ${simData?.terrain_grid &&
+                html`
+                  <div>
+                    <span>LOLA ELEV</span>
+                    <strong>${simData.terrain_grid.min_elevation_m}m to ${simData.terrain_grid.max_elevation_m}m</strong>
+                  </div>
+                `}
+                <div>
+                  <span>SLOPE</span>
+                  <strong>${slopeNow}</strong>
+                </div>
+              `}
         </div>
       </div>
 
